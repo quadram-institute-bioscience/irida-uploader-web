@@ -1,0 +1,347 @@
+{% extends 'uploader/base.html' %}
+
+{% block title %}Dashboard - IRIDA Uploader Web{% endblock %}
+
+{% block content %}
+<div x-data="{ 
+    showUploadModal: false,
+    folders: [],
+    selectedFolder: '',
+    uploads: [],
+    notifications: [],
+    uploadProgress: 0,
+    currentUploadId: null,
+    error: '',
+    socket: null,
+
+    async getFolders() {
+        try {
+            const response = await fetch('{% url 'uploader:get_folders' %}');
+            const data = await response.json();
+            this.folders = data.folders;
+        } catch (err) {
+            console.error('Error fetching folders:', err);
+        }
+    },
+
+    async uploadFiles(e) {
+        const files = e.target.files;
+        if (!files.length || !this.selectedFolder) return;
+
+        const formData = new FormData();
+        formData.append('folder_name', this.selectedFolder);
+        for (let file of files) {
+            formData.append('files', file);
+        }
+
+        try {
+            const response = await fetch('{% url 'uploader:upload_files' %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: formData
+            });
+            const data = await response.json();
+            if (data.status === 'success') {
+                this.currentUploadId = data.upload_id;
+                this.pollUploadStatus();
+                this.showUploadModal = false;
+            } else {
+                this.error = 'Upload failed. Please try again.';
+            }
+        } catch (err) {
+            this.error = 'An error occurred during upload.';
+            console.error('Upload error:', err);
+        }
+    },
+
+    async pollUploadStatus() {
+        if (!this.currentUploadId) return;
+
+        try {
+            const response = await fetch(`{% url 'uploader:get_upload_status' 0 %}`.replace('0', this.currentUploadId));
+            const data = await response.json();
+            
+            const upload = this.uploads.find(u => u.id === this.currentUploadId);
+            if (upload) {
+                upload.status = data.status;
+                upload.files = data.files;
+            }
+
+            if (data.status === 'uploading') {
+                setTimeout(() => this.pollUploadStatus(), 2000);
+            }
+        } catch (err) {
+            console.error('Error polling upload status:', err);
+        }
+    },
+
+    async getNotifications() {
+        try {
+            const response = await fetch('{% url 'uploader:get_notifications' %}');
+            const data = await response.json();
+            this.notifications = data.notifications;
+        } catch (err) {
+            console.error('Error fetching notifications:', err);
+        }
+    },
+
+    async markNotificationRead(notificationId) {
+        try {
+            await fetch(`{% url 'uploader:mark_notification_read' 0 %}`.replace('0', notificationId), {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                }
+            });
+            this.notifications = this.notifications.filter(n => n.id !== notificationId);
+        } catch (err) {
+            console.error('Error marking notification as read:', err);
+        }
+    },
+
+    setupWebSocket() {
+        this.socket = new WebSocket(`ws://${window.location.host}/ws/notifications/`);
+        this.socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'notification') {
+                this.notifications.unshift(data.notification);
+            }
+        };
+    },
+
+    init() {
+        this.getFolders();
+        this.getNotifications();
+        this.setupWebSocket();
+    }
+}">
+    {% csrf_token %}
+    
+    <!-- Notifications -->
+    <div class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">Notifications</h2>
+        <div class="space-y-4">
+            <template x-for="notification in notifications" :key="notification.id">
+                <div :class="{'bg-green-100': notification.type === 'success', 'bg-red-100': notification.type === 'error'}" class="p-4 rounded-lg shadow-sm">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 x-text="notification.title" class="font-semibold"></h3>
+                            <p x-text="notification.message" class="text-sm"></p>
+                            <span x-text="new Date(notification.created_at).toLocaleString()" class="text-xs text-gray-500"></span>
+                        </div>
+                        <button @click="markNotificationRead(notification.id)" class="text-gray-400 hover:text-gray-600">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            </template>
+            <div x-show="notifications.length === 0" class="text-gray-500 text-center py-4">
+                No new notifications
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload History -->
+    <div class="bg-white shadow rounded-lg">
+        <div class="px-4 py-5 border-b border-gray-200 sm:px-6">
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-medium text-gray-900">Upload History</h2>
+                <button @click="showUploadModal = true" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                    <i class="fas fa-upload mr-2"></i>
+                    New Upload
+                </button>
+            </div>
+        </div>
+        
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Folder</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Files</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for upload in uploads %}
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {{ upload.folder_name }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {{ upload.files.count }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                {% if upload.status == 'success' %}bg-green-100 text-green-800
+                                {% elif upload.status == 'failed' %}bg-red-100 text-red-800
+                                {% elif upload.status == 'uploading' %}bg-yellow-100 text-yellow-800
+                                {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                {{ upload.status }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {{ upload.created_at|date:"M d, Y H:i" }}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4" class="px-6 py-4 text-center text-sm text-gray-500">
+                            No uploads yet
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        {% if uploads.has_other_pages %}
+        <div class="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+            <div class="flex-1 flex justify-between sm:hidden">
+                {% if uploads.has_previous %}
+                <a href="?page={{ uploads.previous_page_number }}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    Previous
+                </a>
+                {% endif %}
+                {% if uploads.has_next %}
+                <a href="?page={{ uploads.next_page_number }}" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    Next
+                </a>
+                {% endif %}
+            </div>
+            <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                <div>
+                    <p class="text-sm text-gray-700">
+                        Showing page {{ uploads.number }} of {{ uploads.paginator.num_pages }}
+                    </p>
+                </div>
+                <div>
+                    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                        {% if uploads.has_previous %}
+                        <a href="?page={{ uploads.previous_page_number }}" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                            <i class="fas fa-chevron-left"></i>
+                        </a>
+                        {% endif %}
+                        
+                        {% for i in uploads.paginator.page_range %}
+                        <a href="?page={{ i }}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium {% if uploads.number == i %}text-blue-600 bg-blue-50{% else %}text-gray-700 hover:bg-gray-50{% endif %}">
+                            {{ i }}
+                        </a>
+                        {% endfor %}
+                        
+                        {% if uploads.has_next %}
+                        <a href="?page={{ uploads.next_page_number }}" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                            <i class="fas fa-chevron-right"></i>
+                        </a>
+                        {% endif %}
+                    </nav>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Upload Modal -->
+    <div x-show="showUploadModal" class="fixed z-10 inset-0 overflow-y-auto" x-cloak>
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+                <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <div class="mt-3 text-center sm:mt-0 sm:text-left w-full">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                                Upload Files
+                            </h3>
+                            
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700">Select Folder</label>
+                                <select x-model="selectedFolder" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                                    <option value="">Choose a folder</option>
+                                    <template x-for="folder in folders" :key="folder">
+                                        <option x-text="folder" :value="folder"></option>
+                                    </template>
+                                </select>
+                            </div>
+
+                            <div class="mt-4">
+                                <label class="block text-sm font-medium text-gray-700">Select Files</label>
+                                <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
+                                    <div class="space-y-1 text-center">
+                                        <i class="fas fa-cloud-upload-alt text-gray-400 text-3xl mb-3"></i>
+                                        <div class="flex text-sm text-gray-600">
+                                            <label for="file-upload" class="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500">
+                                                <span>Upload files</span>
+                                                <input @change="uploadFiles" id="file-upload" type="file" class="sr-only" multiple>
+                                            </label>
+                                            <p class="pl-1">or drag and drop</p>
+                                        </div>
+                                        <p class="text-xs text-gray-500">
+                                            Any file type up to 5GB
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div x-show="error" class="mt-4 text-sm text-red-600" x-text="error"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button @click="showUploadModal = false" type="button" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Enable drag and drop file upload
+    const dropZone = document.querySelector('.border-dashed');
+    const fileInput = document.getElementById('file-upload');
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, highlight, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, unhighlight, false);
+    });
+
+    function highlight(e) {
+        dropZone.classList.add('border-blue-300', 'bg-blue-50');
+    }
+
+    function unhighlight(e) {
+        dropZone.classList.remove('border-blue-300', 'bg-blue-50');
+    }
+
+    dropZone.addEventListener('drop', handleDrop, false);
+
+    function handleDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        fileInput.files = files;
+        const event = new Event('change');
+        fileInput.dispatchEvent(event);
+    }
+</script>
+{% endblock %} 

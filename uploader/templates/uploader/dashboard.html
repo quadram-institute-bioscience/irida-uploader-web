@@ -1,18 +1,57 @@
 {% extends 'uploader/base.html' %}
+{% load custom_filters %}
 
 {% block title %}Dashboard - IRIDA Uploader Web{% endblock %}
 
 {% block content %}
 <div x-data="{ 
     showUploadModal: false,
+    showForceUploadConfirm: false,
     folders: [],
     selectedFolder: '',
-    uploads: [],
+    projectName: '',
+    uploads: {{ uploads.object_list|safe }},
     notifications: [],
     uploadProgress: 0,
     currentUploadId: null,
     error: '',
-    socket: null,
+    sampleCount: 0,
+    pendingUpload: null,
+    uploadLogs: [],
+    showLogs: false,
+    currentPage: {{ uploads.number }},
+    searchQuery: '{{ request.GET.search|default:"" }}',
+    showDirectoryInfo: true,
+
+    goToPage(page) {
+        const url = new URL(window.location);
+        url.searchParams.set('page', page);
+        if (this.searchQuery) {
+            url.searchParams.set('search', this.searchQuery);
+        }
+        window.location = url.toString();
+    },
+
+    submitSearch(event) {
+        event.preventDefault();
+        const url = new URL(window.location);
+        if (this.searchQuery) {
+            url.searchParams.set('search', this.searchQuery);
+        } else {
+            url.searchParams.delete('search');
+        }
+        url.searchParams.delete('page'); // Reset to first page on new search
+        window.location = url.toString();
+    },
+
+    closeModals() {
+        this.showUploadModal = false;
+        this.showForceUploadConfirm = false;
+        this.error = '';
+        this.selectedFolder = '';
+        this.projectName = '';
+        this.pendingUpload = null;
+    },
 
     async getFolders() {
         try {
@@ -24,31 +63,95 @@
         }
     },
 
-    async uploadFiles(e) {
-        const files = e.target.files;
-        if (!files.length || !this.selectedFolder) return;
-
-        const formData = new FormData();
-        formData.append('folder_name', this.selectedFolder);
-        for (let file of files) {
-            formData.append('files', file);
-        }
+    async checkFolderStatus() {
+        if (!this.selectedFolder) return;
 
         try {
             const response = await fetch('{% url 'uploader:upload_files' %}', {
                 method: 'POST',
                 headers: {
+                    'Content-Type': 'application/json',
                     'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
                 },
-                body: formData
+                body: JSON.stringify({
+                    folder_name: this.selectedFolder,
+                    check_only: true
+                })
             });
             const data = await response.json();
+            
+            if (data.status === 'warning' && data.needs_force) {
+                this.sampleCount = data.sample_count;
+                this.showForceUploadConfirm = true;
+                this.showUploadModal = false;
+            }
+        } catch (err) {
+            console.error('Error checking folder status:', err);
+            this.error = 'Error checking folder status';
+        }
+    },
+
+    async startUpload(force = false) {
+        if (!this.selectedFolder) {
+            this.error = 'Please select a folder first.';
+            return;
+        }
+
+        if (!force) {
+            // Check folder status before proceeding with upload
+            try {
+                const response = await fetch('{% url 'uploader:upload_files' %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                    },
+                    body: JSON.stringify({
+                        folder_name: this.selectedFolder,
+                        check_only: true
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.status === 'warning' && data.needs_force) {
+                    this.sampleCount = data.sample_count;
+                    this.showForceUploadConfirm = true;
+                    this.showUploadModal = false;
+                    return;
+                }
+            } catch (err) {
+                console.error('Error checking folder status:', err);
+                this.error = 'Error checking folder status';
+                return;
+            }
+        }
+
+        try {
+            // Proceed with upload
+            const response = await fetch('{% url 'uploader:upload_files' %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({
+                    folder_name: this.selectedFolder,
+                    project_name: this.projectName,
+                    force_upload: force
+                })
+            });
+            const data = await response.json();
+            
             if (data.status === 'success') {
                 this.currentUploadId = data.upload_id;
                 this.pollUploadStatus();
                 this.showUploadModal = false;
+                this.showForceUploadConfirm = false;
+                setTimeout(() => {
+                    window.location.reload();
+                }, 500);
             } else {
-                this.error = 'Upload failed. Please try again.';
+                this.error = data.message || 'Upload failed. Please try again.';
             }
         } catch (err) {
             this.error = 'An error occurred during upload.';
@@ -67,9 +170,19 @@
             if (upload) {
                 upload.status = data.status;
                 upload.files = data.files;
+                if (data.logs) {
+                    this.uploadLogs = data.logs;
+                    // Auto-scroll to bottom of logs
+                    this.$nextTick(() => {
+                        const logsContainer = document.querySelector('.logs-container');
+                        if (logsContainer) {
+                            logsContainer.scrollTop = logsContainer.scrollHeight;
+                        }
+                    });
+                }
             }
 
-            if (data.status === 'uploading') {
+            if (data.status === 'uploading' || data.status === 'submitted') {
                 setTimeout(() => this.pollUploadStatus(), 2000);
             }
         } catch (err) {
@@ -101,22 +214,89 @@
         }
     },
 
-    setupWebSocket() {
-        this.socket = new WebSocket(`ws://${window.location.host}/ws/notifications/`);
-        this.socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === 'notification') {
-                this.notifications.unshift(data.notification);
+    async updateUploadStatus(uploadId) {
+        try {
+            const response = await fetch(`{% url 'uploader:get_upload_status' 0 %}`.replace('0', uploadId));
+            const data = await response.json();
+            
+            const uploadIndex = this.uploads.findIndex(u => u.id === uploadId);
+            if (uploadIndex !== -1) {
+                this.uploads[uploadIndex].status = data.status;
+                this.uploads[uploadIndex].irida_project_id = data.irida_project_id;
+                if (data.logs) {
+                    this.uploadLogs = data.logs;
+                }
             }
-        };
+
+            if (data.status === 'submitted' || data.status === 'uploading') {
+                setTimeout(() => this.updateUploadStatus(uploadId), 2000);
+            }
+        } catch (err) {
+            console.error('Error polling upload status:', err);
+        }
+    },
+
+    startStatusPolling() {
+        this.uploads.forEach(upload => {
+            if (upload.status === 'submitted' || upload.status === 'uploading') {
+                this.updateUploadStatus(upload.id);
+            }
+        });
     },
 
     init() {
         this.getFolders();
         this.getNotifications();
-        this.setupWebSocket();
+        this.startStatusPolling();
     }
 }">
+    <div x-data="{ showDirectoryInfo: true }" class="mb-8">
+        <div class="bg-blue-50 border-l-4 border-blue-400 rounded-lg overflow-hidden">
+            <button @click="showDirectoryInfo = !showDirectoryInfo" 
+                    class="w-full px-4 py-3 flex justify-between items-center hover:bg-blue-100/50 focus:outline-none">
+                <div class="flex items-center">
+                    <i class="fas fa-info-circle text-blue-400 mr-2"></i>
+                    <h3 class="text-sm font-medium text-blue-800">Upload Directory Information</h3>
+                </div>
+                <i class="fas transition-transform duration-200" 
+                   :class="showDirectoryInfo ? 'fa-chevron-up' : 'fa-chevron-down'">
+                </i>
+            </button>
+
+            <div x-show="showDirectoryInfo"
+                 x-transition:enter="transition ease-out duration-200" 
+                 x-transition:enter-start="opacity-0 transform -translate-y-2" 
+                 x-transition:enter-end="opacity-100 transform translate-y-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100 transform translate-y-0"
+                 x-transition:leave-end="opacity-0 transform -translate-y-2"
+                 class="px-4 pb-4">
+                <div class="ml-3">
+                    <div class="mt-2 text-sm text-blue-700">
+                        <p>Your upload directory is located at:</p>
+                        <code class="bg-blue-100 px-2 py-1 rounded mt-1 block">{{ upload_directory.path }}</code>
+                        {% if not upload_directory.exists %}
+                            <p class="mt-2 text-yellow-700">
+                                <i class="fas fa-exclamation-triangle mr-1"></i>
+                                This directory doesn't exist yet. Please create it manually or use the upload interface to have it created automatically.
+                            </p>
+                        {% endif %}
+                        <p class="mt-2">
+                            <i class="fas fa-lightbulb mr-1"></i>
+                            Place your subfolders with sequencing files in this directory to make them available for upload to IRIDA.
+                            <br>
+                            <i class="fas fa-info-circle text-blue-400"></i>
+                            Accepted file extensions: 
+                            <code class="bg-blue-100 px-2 py-1 rounded mt-1 block">_R1.fastq.gz</code>
+                            <code class="bg-blue-100 px-2 py-1 rounded mt-1 block">_R2.fastq.gz</code>
+                            <code class="bg-blue-100 px-2 py-1 rounded mt-1 block">.fastq.gz</code>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     {% csrf_token %}
     
     <!-- Notifications -->
@@ -124,11 +304,23 @@
         <h2 class="text-2xl font-bold text-gray-900 mb-4">Notifications</h2>
         <div class="space-y-4">
             <template x-for="notification in notifications" :key="notification.id">
-                <div :class="{'bg-green-100': notification.type === 'success', 'bg-red-100': notification.type === 'error'}" class="p-4 rounded-lg shadow-sm">
+                <div :class="{
+                    'bg-green-100': notification.type === 'success', 
+                    'bg-red-100': notification.type === 'error',
+                    'bg-blue-100': notification.type === 'info'
+                }" class="p-4 rounded-lg shadow-sm">
                     <div class="flex justify-between items-start">
                         <div>
-                            <h3 x-text="notification.title" class="font-semibold"></h3>
-                            <p x-text="notification.message" class="text-sm"></p>
+                            <h3 x-text="notification.title" class="font-semibold" :class="{
+                                'text-green-800': notification.type === 'success',
+                                'text-red-800': notification.type === 'error',
+                                'text-blue-800': notification.type === 'info'
+                            }"></h3>
+                            <p x-text="notification.message" class="text-sm" :class="{
+                                'text-green-700': notification.type === 'success',
+                                'text-red-700': notification.type === 'error',
+                                'text-blue-700': notification.type === 'info'
+                            }"></p>
                             <span x-text="new Date(notification.created_at).toLocaleString()" class="text-xs text-gray-500"></span>
                         </div>
                         <button @click="markNotificationRead(notification.id)" class="text-gray-400 hover:text-gray-600">
@@ -146,12 +338,25 @@
     <!-- Upload History -->
     <div class="bg-white shadow rounded-lg">
         <div class="px-4 py-5 border-b border-gray-200 sm:px-6">
-            <div class="flex justify-between items-center">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
                 <h2 class="text-lg font-medium text-gray-900">Upload History</h2>
-                <button @click="showUploadModal = true" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
-                    <i class="fas fa-upload mr-2"></i>
-                    New Upload
-                </button>
+                <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 w-full sm:w-auto">
+                    <div class="relative flex-grow sm:flex-grow-0 sm:min-w-[300px]">
+                        <form @submit="submitSearch" class="flex">
+                            <input type="text" 
+                                   x-model="searchQuery"
+                                   placeholder="Search by folder name, project name, or date..." 
+                                   class="block w-full pl-3 pr-10 py-2 border border-gray-300 rounded-l-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-l-0 border-gray-300 text-sm font-medium rounded-r-md text-gray-700 bg-gray-50 hover:bg-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </form>
+                    </div>
+                    <button @click="showUploadModal = true" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 w-full sm:w-auto justify-center">
+                        <i class="fas fa-upload mr-2"></i>
+                        New Upload
+                    </button>
+                </div>
             </div>
         </div>
         
@@ -160,93 +365,174 @@
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Folder</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project Name</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project ID</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Files</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
-                    {% for upload in uploads %}
-                    <tr>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {{ upload.folder_name }}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {{ upload.files.count }}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                                {% if upload.status == 'success' %}bg-green-100 text-green-800
-                                {% elif upload.status == 'failed' %}bg-red-100 text-red-800
-                                {% elif upload.status == 'uploading' %}bg-yellow-100 text-yellow-800
-                                {% else %}bg-gray-100 text-gray-800{% endif %}">
-                                {{ upload.status }}
-                            </span>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {{ upload.created_at|date:"M d, Y H:i" }}
+                    <template x-for="upload in uploads" :key="upload.id">
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="upload.folder_name"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="upload.project_name || '-'"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <template x-if="upload.irida_project_id !== '-'">
+                                    <a :href="`{{ irida_base_url }}/projects/${upload.irida_project_id}`"
+                                       class="text-blue-600 hover:text-blue-800 hover:underline"
+                                       target="_blank"
+                                       x-text="upload.irida_project_id">
+                                    </a>
+                                </template>
+                                <template x-if="upload.irida_project_id === '-'">
+                                    <span>-</span>
+                                </template>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <span x-text="upload.file_count"></span>
+                                <span class="text-gray-400 ml-1">samples</span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-3 py-1 inline-flex items-center text-sm leading-5 font-medium rounded-full"
+                                    :class="{
+                                        'bg-green-100 text-green-800': upload.status === 'success',
+                                        'bg-red-100 text-red-800': upload.status === 'failed',
+                                        'bg-yellow-100 text-yellow-800': upload.status === 'uploading',
+                                        'bg-blue-100 text-blue-800': upload.status === 'submitted'
+                                    }">
+                                    <i class="mr-1.5 text-xs"
+                                       :class="{
+                                           'fas fa-check': upload.status === 'success',
+                                           'fas fa-times': upload.status === 'failed',
+                                           'fas fa-sync fa-spin': upload.status === 'uploading',
+                                           'fas fa-clock': upload.status === 'submitted'
+                                       }">
+                                    </i>
+                                    <span x-text="upload.status.charAt(0).toUpperCase() + upload.status.slice(1)"></span>
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(upload.created_at).toLocaleString()"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <button @click="updateUploadStatus(upload.id)" 
+                                        class="text-blue-600 hover:text-blue-800">
+                                    <i class="fas fa-eye mr-1"></i>View Logs
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="uploads.length === 0">
+                        <td colspan="6" class="px-6 py-4 text-center text-sm text-gray-500">
+                            No uploads found
                         </td>
                     </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="4" class="px-6 py-4 text-center text-sm text-gray-500">
-                            No uploads yet
-                        </td>
-                    </tr>
-                    {% endfor %}
                 </tbody>
             </table>
         </div>
         
-        {% if uploads.has_other_pages %}
+        <!-- Pagination -->
         <div class="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
             <div class="flex-1 flex justify-between sm:hidden">
                 {% if uploads.has_previous %}
-                <a href="?page={{ uploads.previous_page_number }}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <button @click="goToPage({{ uploads.previous_page_number }})" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                     Previous
-                </a>
+                </button>
                 {% endif %}
                 {% if uploads.has_next %}
-                <a href="?page={{ uploads.next_page_number }}" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <button @click="goToPage({{ uploads.next_page_number }})" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                     Next
-                </a>
+                </button>
                 {% endif %}
             </div>
             <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
                 <div>
                     <p class="text-sm text-gray-700">
-                        Showing page {{ uploads.number }} of {{ uploads.paginator.num_pages }}
+                        Page {{ uploads.number }} of {{ uploads.paginator.num_pages }}
+                        ({{ uploads.paginator.count }} total results)
                     </p>
                 </div>
                 <div>
-                    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
                         {% if uploads.has_previous %}
-                        <a href="?page={{ uploads.previous_page_number }}" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                        <button @click="goToPage({{ uploads.previous_page_number }})" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                            <span class="sr-only">Previous</span>
                             <i class="fas fa-chevron-left"></i>
-                        </a>
+                        </button>
                         {% endif %}
                         
-                        {% for i in uploads.paginator.page_range %}
-                        <a href="?page={{ i }}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium {% if uploads.number == i %}text-blue-600 bg-blue-50{% else %}text-gray-700 hover:bg-gray-50{% endif %}">
-                            {{ i }}
-                        </a>
+                        {% for page_num in uploads.paginator.page_range %}
+                            {% if page_num == "..." %}
+                            <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                ...
+                            </span>
+                            {% else %}
+                            <button @click="goToPage({{ page_num }})" 
+                                    class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium
+                                    {% if page_num == uploads.number %}
+                                        z-10 bg-blue-50 border-blue-500 text-blue-600
+                                    {% else %}
+                                        bg-white text-gray-500 hover:bg-gray-50
+                                    {% endif %}">
+                                {{ page_num }}
+                            </button>
+                            {% endif %}
                         {% endfor %}
                         
                         {% if uploads.has_next %}
-                        <a href="?page={{ uploads.next_page_number }}" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                        <button @click="goToPage({{ uploads.next_page_number }})" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                            <span class="sr-only">Next</span>
                             <i class="fas fa-chevron-right"></i>
-                        </a>
+                        </button>
                         {% endif %}
                     </nav>
                 </div>
             </div>
         </div>
-        {% endif %}
+    </div>
+
+    <!-- Redesigned Upload Logs -->
+    <div x-show="uploadLogs.length > 0" class="mt-8">
+        <div class="bg-white shadow rounded-lg overflow-hidden">
+            <button @click="showLogs = !showLogs" 
+                    class="w-full px-4 py-3 flex justify-between items-center hover:bg-gray-50 focus:outline-none">
+                <div class="flex items-center">
+                    <i class="fas fa-terminal text-gray-400 mr-2"></i>
+                    <h2 class="text-lg font-medium text-gray-900">Upload Logs</h2>
+                    <span class="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600" 
+                          x-text="`${uploadLogs.length} entries`"></span>
+                </div>
+                <i class="fas transition-transform duration-200" 
+                   :class="showLogs ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+            </button>
+            
+            <div x-show="showLogs" 
+                 x-transition:enter="transition ease-out duration-200" 
+                 x-transition:enter-start="opacity-0 transform -translate-y-2" 
+                 x-transition:enter-end="opacity-100 transform translate-y-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100 transform translate-y-0"
+                 x-transition:leave-end="opacity-0 transform -translate-y-2"
+                 class="border-t border-gray-200"
+                 x-cloak>
+                <div class="p-4">
+                    <div class="bg-gray-900 text-green-400 font-mono text-sm p-4 rounded-lg max-h-96 overflow-y-auto logs-container">
+                        <template x-for="(log, index) in uploadLogs" :key="index">
+                            <div x-text="log" class="whitespace-pre-wrap leading-relaxed"></div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Upload Modal -->
-    <div x-show="showUploadModal" class="fixed z-10 inset-0 overflow-y-auto" x-cloak>
-        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+    <div x-show="showUploadModal" 
+         x-cloak
+         @keydown.escape.window="showUploadModal = false"
+         class="fixed z-10 inset-0 overflow-y-auto">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+             @click.away="showUploadModal = false">
             <div class="fixed inset-0 transition-opacity" aria-hidden="true">
                 <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
             </div>
@@ -256,7 +542,7 @@
                     <div class="sm:flex sm:items-start">
                         <div class="mt-3 text-center sm:mt-0 sm:text-left w-full">
                             <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
-                                Upload Files
+                                Upload Files from Folder
                             </h3>
                             
                             <div class="mb-4">
@@ -269,23 +555,12 @@
                                 </select>
                             </div>
 
-                            <div class="mt-4">
-                                <label class="block text-sm font-medium text-gray-700">Select Files</label>
-                                <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
-                                    <div class="space-y-1 text-center">
-                                        <i class="fas fa-cloud-upload-alt text-gray-400 text-3xl mb-3"></i>
-                                        <div class="flex text-sm text-gray-600">
-                                            <label for="file-upload" class="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500">
-                                                <span>Upload files</span>
-                                                <input @change="uploadFiles" id="file-upload" type="file" class="sr-only" multiple>
-                                            </label>
-                                            <p class="pl-1">or drag and drop</p>
-                                        </div>
-                                        <p class="text-xs text-gray-500">
-                                            Any file type up to 5GB
-                                        </p>
-                                    </div>
-                                </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700">Project Name (Optional)</label>
+                                <input type="text" x-model="projectName" 
+                                    class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                    placeholder="Leave empty to use folder name">
+                                <p class="mt-1 text-sm text-gray-500">If not provided, will use folder name with timestamp</p>
                             </div>
 
                             <div x-show="error" class="mt-4 text-sm text-red-600" x-text="error"></div>
@@ -293,55 +568,54 @@
                     </div>
                 </div>
                 <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button @click="startUpload(false)" type="button" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm">
+                        Start Upload
+                    </button>
                     <button @click="showUploadModal = false" type="button" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
-                        Close
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Force Upload Confirmation Modal -->
+    <div x-show="showForceUploadConfirm" 
+         x-cloak
+         class="fixed z-20 inset-0 overflow-y-auto">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+                <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100 sm:mx-0 sm:h-10 sm:w-10">
+                            <i class="fas fa-exclamation-triangle text-yellow-600"></i>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900">
+                                Folder Already Uploaded
+                            </h3>
+                            <div class="mt-2">
+                                <p class="text-sm text-gray-500">
+                                    This folder has already been uploaded with <span x-text="sampleCount"></span> samples. Do you want to upload it again?
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button @click="startUpload(true)" type="button" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-yellow-600 text-base font-medium text-white hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 sm:ml-3 sm:w-auto sm:text-sm">
+                        Yes, Upload Again
+                    </button>
+                    <button @click="showForceUploadConfirm = false; showUploadModal = true" type="button" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Cancel
                     </button>
                 </div>
             </div>
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-    // Enable drag and drop file upload
-    const dropZone = document.querySelector('.border-dashed');
-    const fileInput = document.getElementById('file-upload');
-
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, preventDefaults, false);
-    });
-
-    function preventDefaults (e) {
-        e.preventDefault();
-        e.stopPropagation();
-    }
-
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, highlight, false);
-    });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, unhighlight, false);
-    });
-
-    function highlight(e) {
-        dropZone.classList.add('border-blue-300', 'bg-blue-50');
-    }
-
-    function unhighlight(e) {
-        dropZone.classList.remove('border-blue-300', 'bg-blue-50');
-    }
-
-    dropZone.addEventListener('drop', handleDrop, false);
-
-    function handleDrop(e) {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-        fileInput.files = files;
-        const event = new Event('change');
-        fileInput.dispatchEvent(event);
-    }
-</script>
 {% endblock %} 

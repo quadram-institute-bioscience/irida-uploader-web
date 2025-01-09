@@ -3,13 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}IRIDA Uploader Web{% endblock %}</title>
-    <!-- Tailwind CSS via CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Alpine.js -->
+    <title>{% block title %}{% endblock %}</title>
+    <link href="https://unpkg.com/tailwindcss@^2/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+    <style>
+        [x-cloak] { 
+            display: none !important; 
+        }
+    </style>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body class="bg-gray-100 min-h-screen">
     {% if user.is_authenticated %}
@@ -22,6 +24,9 @@
                     </div>
                     <div class="hidden md:ml-6 md:flex md:space-x-8">
                         <a href="{% url 'uploader:dashboard' %}" class="inline-flex items-center px-1 pt-1 text-gray-900">Dashboard</a>
+                        {% if user.is_superuser or user.is_staff %}
+                        <a href="{% url 'admin:index' %}" class="inline-flex items-center px-1 pt-1 text-gray-900">Admin</a>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="flex items-center">
@@ -58,6 +63,12 @@
         
         {% block content %}{% endblock %}
     </main>
+
+    <footer class="bg-white shadow-lg mt-auto">
+        <div class="max-w-7xl mx-auto py-4 px-4">
+            <p class="text-center text-gray-600">Made in Norwich - A Fine City</p>
+        </div>
+    </footer>
 
     {% block extra_js %}{% endblock %}
 </body>

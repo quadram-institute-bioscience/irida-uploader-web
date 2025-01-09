@@ -1,6 +1,4 @@
 Django==4.2.7
-channels==4.0.0
-channels-redis==4.1.0
 celery==5.3.6
 django-celery-results==2.5.1
 python-ldap==3.4.3
@@ -9,4 +7,5 @@ django-auth-ldap==4.6.0
 Pillow==10.1.0
 iridauploader==0.9.2
 django-environ==0.11.2
-django-ninja==1.0.1 
+django-ninja==1.0.1
+requests==2.31.0

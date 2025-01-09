@@ -1,8 +1,9 @@
 from celery import shared_task
 from django.core.mail import send_mail
 from django.conf import settings
-from .models import Upload, UploadFile, Notification
+from .models import Upload, Notification
 import iridauploader.core as core
+import iridauploader.config as irida_config
 from iridauploader.model import Project
 from iridauploader.core import api_handler
 import os
@@ -13,9 +14,15 @@ import datetime
 import logging
 import pathlib
 import re
+import time
+from logging import StreamHandler
+from io import StringIO
+
+logger = logging.getLogger(__name__)
 
 def initialize_irida_api():
     """Initialize the IRIDA API from Django settings."""
+    logger.info("Initializing IRIDA API")
     settings_dict = {
         "base_url": settings.IRIDA_BASE_URL,
         "client_id": settings.IRIDA_CLIENT_ID,
@@ -24,39 +31,61 @@ def initialize_irida_api():
         "password": settings.IRIDA_PASSWORD,
         "timeout_multiplier": settings.IRIDA_TIMEOUT,
     }
+    logger.info(f"IRIDA settings: {settings_dict}")
 
     # Create a temporary config file
     temp_config = tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".conf")
     temp_config_path = temp_config.name
+    logger.info(f"Created temporary config file at: {temp_config_path}")
 
-    config = configparser.ConfigParser()
-    config["Settings"] = settings_dict
-    config.write(temp_config)
-    temp_config.close()
+    # Write config file directly without using configparser
+    with open(temp_config_path, 'w') as f:
+        f.write("[Settings]\n")
+        f.write(f"base_url = {settings_dict['base_url']}\n")
+        f.write(f"client_id = {settings_dict['client_id']}\n")
+        f.write(f"client_secret = {settings_dict['client_secret']}\n")
+        f.write(f"username = {settings_dict['username']}\n")
+        f.write(f"password = {settings_dict['password']}\n")
+        f.write(f"timeout = {settings_dict['timeout_multiplier']}\n")
 
     # Schedule the temporary file for deletion
     atexit.register(os.unlink, temp_config_path)
 
-    return api_handler._initialize_api(**settings_dict), temp_config_path
+    try:
+        logger.info("Attempting to initialize IRIDA API")
+        api = api_handler._initialize_api(**settings_dict)
+        logger.info("Successfully initialized IRIDA API")
+        return api, temp_config_path
+    except Exception as e:
+        logger.error(f"Failed to initialize IRIDA API: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error args: {e.args}")
+        raise
 
 def create_irida_project(name, project_description=None):
     """Create a project in IRIDA."""
     if project_description is None:
         project_description = f"Created on {datetime.date.today()} via IUW"
     try:
+        logger.info(f"Creating IRIDA project: {name}")
         _api, _ = initialize_irida_api()
+        logger.info("Getting list of existing projects")
         projects_list = _api.get_projects()
         existed_project = [prj.id for prj in projects_list if prj.name == name]
         
         if len(existed_project) == 0:
+            logger.info("Project doesn't exist, creating new one")
             new_project = Project(name, project_description)
             created_project = _api.send_project(new_project)
             project_id = created_project['resource']['identifier']
+            logger.info(f"Created new project with ID: {project_id}")
             return project_id
         else:
+            logger.info(f"Project already exists with ID: {existed_project[0]}")
             return existed_project[0]
     except Exception as e:
-        raise e
+        logger.error(f"Error creating IRIDA project: {str(e)}")
+        raise
 
 def prepare_sample_list(directory_path, pattern="*_R1_001.fastq.gz", project_id=None, 
                        project_name=None, paired_end=True, sort=False):
@@ -66,7 +95,7 @@ def prepare_sample_list(directory_path, pattern="*_R1_001.fastq.gz", project_id=
     if project_id is None:
         if project_name is None:
             run_date = datetime.date.today().strftime("%y%m%d")
-            project_name = f'IUW-{p.parts[-1].replace("_","-")}-{run_date}'
+            project_name = f'QIB-{p.parts[-1].replace("_","-")}-{run_date}'
         
         project_id = create_irida_project(name=project_name)
 
@@ -100,120 +129,184 @@ def prepare_sample_list(directory_path, pattern="*_R1_001.fastq.gz", project_id=
 
     return sample_file, project_id
 
+class NotificationLogHandler(StreamHandler):
+    def __init__(self, upload_id, user_id):
+        super().__init__()
+        self.upload_id = upload_id
+        self.user_id = user_id
+        self.buffer = StringIO()
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.buffer.write(msg + '\n')
+        
+        # Create notification for errors
+        if record.levelno >= logging.ERROR:
+            Notification.objects.create(
+                user_id=self.user_id,
+                title='Upload Error',
+                message=msg,
+                type='error',
+                related_upload_id=self.upload_id
+            )
+
+    def close(self):
+        self.buffer.close()
+        super().close()
+
 @shared_task(bind=True, max_retries=5)
-def process_upload(self, upload_id):
+def process_upload(self, upload_id, force_upload=False):
     """Process file upload and send to IRIDA."""
     try:
+        logger.info(f"Starting upload process for upload_id: {upload_id}")
         upload = Upload.objects.get(id=upload_id)
         upload.status = 'uploading'
         upload.save()
-        
-        # Process each file in the upload
-        files = upload.files.all()
-        user_dir = upload.user.get_upload_dir()
-        target_dir = os.path.join(user_dir, upload.folder_name)
-        os.makedirs(target_dir, exist_ok=True)
-        
-        # Move files to target directory and track status
-        for upload_file in files:
+
+        # Set up log capture
+        irida_logger = logging.getLogger('iridauploader')
+        notification_handler = NotificationLogHandler(upload_id, upload.user.id)
+        notification_handler.setLevel(logging.INFO)
+        irida_logger.addHandler(notification_handler)
+
+        try:
+            # Get the target directory
+            user_dir = upload.user.get_upload_dir()
+            target_dir = os.path.join(user_dir, upload.folder_name)
+            logger.info(f"Processing files in directory: {target_dir}")
+
+            # Prepare sample list and get project ID
             try:
-                upload_file.status = 'uploading'
-                upload_file.save()
+                logger.info("Preparing sample list and creating IRIDA project")
                 
-                source_path = upload_file.file.path
-                target_path = os.path.join(target_dir, upload_file.original_filename)
+                subfolder_name = os.path.basename(target_dir)
+                run_date = datetime.date.today().strftime("%y%m%d")
                 
-                with open(source_path, 'rb') as src, open(target_path, 'wb') as dst:
-                    while True:
-                        chunk = src.read(8192)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
+                project_name = upload.project_name if upload.project_name else f"QIB-{subfolder_name}-{run_date}"
+                logger.info(f"Using project name: {project_name}")
                 
-                upload_file.status = 'success'
-                upload_file.save()
+                sample_list, project_id = prepare_sample_list(
+                    directory_path=target_dir,
+                    project_name=project_name
+                )
+                
+                # Update upload with project ID and sample count
+                with open(sample_list, 'r') as f:
+                    # Skip header lines
+                    next(f)  # Skip [Data]
+                    next(f)  # Skip column headers
+                    sample_count = sum(1 for line in f)
+                
+                upload.sample_count = sample_count
+                upload.irida_project_id = project_id
+                upload.save()
+                
+                logger.info(f"Sample list created with {sample_count} samples, project ID: {project_id}")
                 
             except Exception as e:
-                upload_file.status = 'failed'
-                upload_file.save()
+                logger.error(f"Error preparing sample list: {str(e)}")
                 raise e
 
-        # Prepare sample list and get project ID
-        sample_list, project_id = prepare_sample_list(
-            directory_path=target_dir,
-            project_name=f"IUW-{upload.user.email}-{datetime.date.today().strftime('%y%m%d')}"
-        )
+            # Upload to IRIDA
+            try:
+                logger.info(f"Starting IRIDA upload for directory: {target_dir}")
+                logger.info("Initializing IRIDA API for upload")
+                
+                # Initialize API and get config path
+                api, config_path = initialize_irida_api()
+                logger.info(f"Using config file: {config_path}")
+                
+                # Set up configuration
+                irida_config.set_config_file(config_path)
+                irida_config.setup()
+                logger.info("IRIDA configuration set up")
+                
+                # Perform the upload
+                logger.info("Starting upload_run_single_entry")
+                result = core.upload.upload_run_single_entry(
+                    target_dir,
+                    force_upload=force_upload,
+                    upload_mode="default",
+                    continue_upload=False
+                )
+                logger.info(f"Upload result: {result}")
+                logger.info(f"Upload exit code: {result.exit_code}")
 
-        # Upload to IRIDA
-        exit_code = core.upload.upload_run_single_entry(
-            target_dir,
-            force_upload=False,
-            upload_mode="default",
-            continue_upload=False
-        ).exit_code
+                if result.exit_code == 0:
+                    upload.status = 'success'
+                    logger.info("IRIDA upload completed successfully")
+                else:
+                    upload.status = 'failed'
+                    logger.error(f"IRIDA upload failed with exit code {result.exit_code}")
+                upload.save()
 
-        if exit_code == 0:
-            upload.status = 'success'
-        else:
-            upload.status = 'failed'
-        upload.save()
-        
-        # Create notification
-        create_notification.delay(
-            upload.user.id,
-            upload.id,
-            'success' if upload.status == 'success' else 'error'
-        )
-        
+            except Exception as e:
+                logger.error(f"Error during IRIDA upload: {str(e)}")
+                logger.error(f"Error type: {type(e)}")
+                logger.error(f"Error args: {e.args}")
+                upload.status = 'failed'
+                upload.save()
+                raise e
+            
+            # Try to create notification, but don't fail if it doesn't work
+            try:
+                create_notification.delay(
+                    upload.user.id,
+                    upload.id,
+                    'success' if upload.status == 'success' else 'error'
+                )
+            except Exception as e:
+                logger.error(f"Failed to create notification: {str(e)}")
+            
+        finally:
+            # Clean up the log handler
+            irida_logger.removeHandler(notification_handler)
+            notification_handler.close()
+
     except Exception as exc:
+        logger.error(f"Error processing upload {upload_id}: {str(exc)}")
         # Increment retry count
-        upload = Upload.objects.get(id=upload_id)
-        upload.retry_count += 1
-        upload.status = 'failed'
-        upload.save()
-        
-        if upload.retry_count < 5:
-            raise self.retry(exc=exc, countdown=60)
-        else:
-            create_notification.delay(
-                upload.user.id,
-                upload.id,
-                'error'
-            )
+        try:
+            upload = Upload.objects.get(id=upload_id)
+            upload.status = 'failed'
+            upload.save()
+            
+            if upload.retry_count < 5:
+                raise self.retry(exc=exc, countdown=60)
+            else:
+                try:
+                    create_notification.delay(
+                        upload.user.id,
+                        upload.id,
+                        'error'
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to create error notification: {str(e)}")
+        except Upload.DoesNotExist:
+            logger.error(f"Upload {upload_id} not found when handling error")
+        except Exception as e:
+            logger.error(f"Error handling upload failure: {str(e)}")
 
 @shared_task
 def create_notification(user_id, upload_id, notification_type):
-    upload = Upload.objects.get(id=upload_id)
-    
-    if notification_type == 'success':
-        title = 'Upload Complete'
-        message = f'Your upload "{upload.folder_name}" has completed successfully.'
-    else:
-        title = 'Upload Failed'
-        message = f'Your upload "{upload.folder_name}" has failed. Please try again.'
-    
-    # Create in-app notification
-    notification = Notification.objects.create(
-        user_id=user_id,
-        title=title,
-        message=message,
-        type=notification_type,
-        related_upload=upload
-    )
-    
-    # Send email notification
-    send_email_notification.delay(user_id, title, message)
+    """Create a notification for an upload."""
+    try:
+        upload = Upload.objects.get(id=upload_id)
+        title = 'Upload Complete' if notification_type == 'success' else 'Upload Failed'
+        message = f'Upload of {upload.folder_name} has {"completed successfully" if notification_type == "success" else "failed"}.'
+        
+        Notification.objects.create(
+            user_id=user_id,
+            title=title,
+            message=message,
+            type=notification_type,
+            related_upload=upload
+        )
+    except Exception as e:
+        logger.error(f"Error creating notification: {str(e)}")
 
 @shared_task
-def send_email_notification(user_id, title, message):
-    from django.contrib.auth import get_user_model
-    User = get_user_model()
-    
-    user = User.objects.get(id=user_id)
-    send_mail(
-        title,
-        message,
-        settings.EMAIL_HOST_USER,
-        [user.email],
-        fail_silently=False,
-    ) 
+def test_celery(x, y):
+    """Test task to verify Celery is working."""
+    time.sleep(2)  # Simulate some work
+    return x + y 

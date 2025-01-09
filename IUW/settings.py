@@ -26,6 +26,7 @@ env = environ.Env(
     REDIS_PORT=(int, 6379),
     MAX_UPLOAD_SIZE=(int, 5242880000),  # 5GB in bytes
     IRIDA_TIMEOUT=(int, 10),
+    USE_LDAP=(bool, False),  # Make LDAP optional
 )
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -55,7 +56,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'channels',
     'django_celery_results',
     'uploader.apps.UploaderConfig',
 ]
@@ -146,18 +146,20 @@ AUTH_USER_MODEL = 'uploader.User'
 # Authentication Backends
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
-    'django_auth_ldap.backend.LDAPBackend',
 ]
 
-# LDAP Configuration
-AUTH_LDAP_SERVER_URI = env('LDAP_SERVER_URI', default="ldap://your.ldap.server")
-AUTH_LDAP_BIND_DN = env('LDAP_BIND_DN', default="")
-AUTH_LDAP_BIND_PASSWORD = env('LDAP_BIND_PASSWORD', default="")
-AUTH_LDAP_USER_SEARCH = LDAPSearch(
-    env('LDAP_SEARCH_BASE', default="ou=users,dc=example,dc=com"),
-    ldap.SCOPE_SUBTREE,
-    env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
-)
+# LDAP Configuration - Only add if LDAP is enabled
+if env('USE_LDAP'):
+    AUTHENTICATION_BACKENDS.append('django_auth_ldap.backend.LDAPBackend')
+    
+    AUTH_LDAP_SERVER_URI = env('LDAP_SERVER_URI', default="ldap://your.ldap.server")
+    AUTH_LDAP_BIND_DN = env('LDAP_BIND_DN', default="")
+    AUTH_LDAP_BIND_PASSWORD = env('LDAP_BIND_PASSWORD', default="")
+    AUTH_LDAP_USER_SEARCH = LDAPSearch(
+        env('LDAP_SEARCH_BASE', default="ou=users,dc=example,dc=com"),
+        ldap.SCOPE_SUBTREE,
+        env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
+    )
 
 # Redis Settings
 REDIS_HOST = env('REDIS_HOST', default='127.0.0.1')
@@ -171,16 +173,15 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
-
-# Channel Layer Settings for WebSocket
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [(REDIS_HOST, REDIS_PORT)],
-        },
-    },
-}
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+CELERY_WORKER_REDIRECT_STDOUTS = False
+CELERY_WORKER_REDIRECT_STDOUTS_LEVEL = 'DEBUG'
+CELERY_BROKER_CONNECTION_RETRY = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BROKER_CONNECTION_MAX_RETRIES = 10
+CELERY_BROKER_CONNECTION_TIMEOUT = 30
 
 # File Upload Settings
 UPLOAD_ROOT = env('UPLOAD_ROOT', default=str(BASE_DIR / 'uploads'))
@@ -191,12 +192,12 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE
 FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE
 
 # Email Settings
-EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = env('EMAIL_HOST', default='smtp.your-email-provider.com')
-EMAIL_PORT = env('EMAIL_PORT')
-EMAIL_USE_TLS = env('EMAIL_USE_TLS')
-EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='your-email@example.com')
-EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='your-email-password')
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # Development only
+# EMAIL_HOST = env('EMAIL_HOST', default='smtp.your-email-provider.com')
+# EMAIL_PORT = env('EMAIL_PORT')
+# EMAIL_USE_TLS = env('EMAIL_USE_TLS')
+# EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='your-email@example.com')
+# EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='your-email-password')
 
 # IRIDA Settings
 IRIDA_BASE_URL = env('IRIDA_BASE_URL', default='https://your.irida.server')

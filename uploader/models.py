@@ -3,6 +3,10 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 import os
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 class User(AbstractUser):
     email = models.EmailField(_('email address'), unique=True)
@@ -21,39 +25,81 @@ class Upload(models.Model):
         ('submitted', 'Submitted'),
         ('uploading', 'Uploading'),
         ('failed', 'Failed'),
-        ('success', 'Success'),
+        ('success', 'Success')
     ]
     
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     folder_name = models.CharField(max_length=255)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='submitted')
+    project_name = models.CharField(max_length=255, null=True, blank=True)
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='submitted')
+    task_id = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    retry_count = models.IntegerField(default=0)
-    task_id = models.CharField(max_length=255, null=True, blank=True)
+    sample_count = models.IntegerField(default=0)  # Track number of samples
+    irida_project_id = models.CharField(max_length=50, null=True, blank=True)
+    irida_run_id = models.CharField(max_length=50, null=True, blank=True)  # New field for Run ID
+    uploaded_samples = models.JSONField(default=list, blank=True)  # New field to store sample details
+
+    def update_from_status_file(self):
+        """Updates the upload record with information from the status file"""
+        status_file = os.path.join(self.get_full_path(), 'irida_uploader_status.info')
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, 'r') as f:
+                    data = json.loads(f.read())
+                    
+                    # Update Run ID
+                    self.irida_run_id = data.get('Run ID')
+                    
+                    # Update sample information
+                    sample_status = data.get('Sample Status', [])
+                    successful_samples = [
+                        {
+                            'name': s['Sample Name'],
+                            'project_id': s['Project ID']
+                        }
+                        for s in sample_status
+                        if s.get('Uploaded') == 'True'
+                    ]
+                    
+                    self.uploaded_samples = successful_samples
+                    self.sample_count = len(successful_samples)
+                    
+                    # Update project ID if not already set
+                    if not self.irida_project_id and successful_samples:
+                        self.irida_project_id = successful_samples[0]['project_id']
+                    
+                    self.save()
+                    return True
+            except Exception as e:
+                logger.error(f"Error updating from status file: {str(e)}")
+        return False
+
+    def get_file_info(self):
+        """Returns the number of uploaded samples from the database"""
+        return self.sample_count
+
+    def get_full_path(self):
+        """Returns the absolute path to the folder in UPLOAD_ROOT"""
+        return os.path.join(settings.UPLOAD_ROOT, self.user.email, self.folder_name)
+
+    def __str__(self):
+        return f"{self.folder_name} ({self.status})"
 
     class Meta:
         ordering = ['-created_at']
 
-class UploadFile(models.Model):
-    upload = models.ForeignKey(Upload, related_name='files', on_delete=models.CASCADE)
-    file = models.FileField(upload_to='uploads/%Y/%m/%d/')
-    original_filename = models.CharField(max_length=255)
-    size = models.BigIntegerField()
-    uploaded_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=20, choices=Upload.STATUS_CHOICES, default='submitted')
-
 class Notification(models.Model):
-    TYPE_CHOICES = [
+    NOTIFICATION_TYPES = [
         ('success', 'Success'),
         ('error', 'Error'),
-        ('info', 'Information'),
+        ('info', 'Info'),
     ]
     
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    title = models.CharField(max_length=255)
+    title = models.CharField(max_length=200)
     message = models.TextField()
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    type = models.CharField(max_length=10, choices=NOTIFICATION_TYPES)
     created_at = models.DateTimeField(auto_now_add=True)
     read = models.BooleanField(default=False)
-    related_upload = models.ForeignKey(Upload, null=True, blank=True, on_delete=models.SET_NULL)
+    related_upload = models.ForeignKey(Upload, on_delete=models.CASCADE, null=True, blank=True)

@@ -17,13 +17,34 @@ def login_view(request):
     if request.method == 'POST':
         email = request.POST.get('email')
         password = request.POST.get('password')
-        use_ldap = request.POST.get('use_ldap') == 'true'
+        user = None
         
-        user = authenticate(request, username=email, password=password)
+        # First try LDAP authentication if enabled
+        if settings.USE_LDAP:
+            try:
+                # Try LDAP authentication first
+                user = authenticate(request, username=email, password=password, use_ldap=True)
+                logger.info(f"LDAP authentication attempt for {email}")
+            except Exception as e:
+                logger.warning(f"LDAP authentication failed for {email}: {str(e)}")
+        
+        # If LDAP fails or is disabled, try local database authentication
+        if user is None:
+            try:
+                user = authenticate(request, username=email, password=password)
+                logger.info(f"Local authentication attempt for {email}")
+            except Exception as e:
+                logger.warning(f"Local authentication failed for {email}: {str(e)}")
+        
         if user is not None:
             login(request, user)
             return JsonResponse({'status': 'success'})
-        return JsonResponse({'status': 'error', 'message': 'Invalid credentials'})
+            
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Invalid credentials'
+        })
+        
     return render(request, 'uploader/login.html')
 
 @login_required
@@ -48,7 +69,7 @@ def dashboard(request):
     uploads = uploads.order_by('-created_at')
     
     # Set items per page
-    items_per_page = 10
+    items_per_page = 5
     paginator = Paginator(uploads, items_per_page)
     
     try:
@@ -304,3 +325,17 @@ def test_result(request, task_id):
             'status': 'error',
             'message': str(e)
         }, status=500)
+
+@login_required
+def get_queue_info(request):
+    try:
+        queue_info = tasks.get_queue_info_tasks()
+        logger.info(f"Queue info: {queue_info}")  # Add logging to help debug
+        return JsonResponse(queue_info)
+    except Exception as e:
+        logger.error(f"Error getting queue info: {str(e)}")
+        return JsonResponse({
+            'total_in_queue': 0,
+            'tasks': [],
+            'error': str(e)
+        })

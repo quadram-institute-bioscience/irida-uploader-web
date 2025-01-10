@@ -14,7 +14,7 @@ from pathlib import Path
 import environ
 import os
 import ldap
-from django_auth_ldap.config import LDAPSearch, GroupOfNamesType
+from django_auth_ldap.config import LDAPSearch, GroupOfNamesType, NestedGroupOfNamesType
 
 # Initialize environ
 env = environ.Env(
@@ -26,7 +26,6 @@ env = environ.Env(
     REDIS_PORT=(int, 6379),
     MAX_UPLOAD_SIZE=(int, 5242880000),  # 5GB in bytes
     IRIDA_TIMEOUT=(int, 10),
-    USE_LDAP=(bool, False),  # Make LDAP optional
 )
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -161,6 +160,40 @@ if env('USE_LDAP'):
         env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
     )
 
+    # Add group configuration
+    AUTH_LDAP_GROUP_SEARCH = LDAPSearch(
+        env('LDAP_GROUP_SEARCH_BASE', default="ou=groups,dc=example,dc=com"),
+        ldap.SCOPE_SUBTREE,
+        "(objectClass=groupOfNames)"
+    )
+    AUTH_LDAP_GROUP_TYPE = GroupOfNamesType()
+    
+    # Specify which groups should be automatically activated
+    AUTH_LDAP_USER_FLAGS_BY_GROUP = {
+        "is_active": env('LDAP_AUTO_ACTIVE_GROUPS', default="cn=approved_users,ou=groups,dc=example,dc=com"),
+    }
+
+    # User attributes mapping
+    AUTH_LDAP_USER_ATTR_MAP = {
+        "first_name": "givenName",
+        "last_name": "sn",
+        "email": "mail",
+    }
+
+    # Always update user attributes on login
+    AUTH_LDAP_ALWAYS_UPDATE_USER = True
+
+    # Mirror LDAP group assignments
+    AUTH_LDAP_MIRROR_GROUPS = True
+
+    # If user is not in auto-active groups, set them as inactive
+    AUTH_LDAP_USER_ATTR_MAP = {
+        "first_name": "givenName",
+        "last_name": "sn",
+        "email": "mail",
+        "is_active": "userAccountControl",  # This will be overridden by AUTH_LDAP_USER_FLAGS_BY_GROUP
+    }
+
 # Redis Settings
 REDIS_HOST = env('REDIS_HOST', default='127.0.0.1')
 REDIS_PORT = env('REDIS_PORT')
@@ -182,6 +215,14 @@ CELERY_BROKER_CONNECTION_RETRY = True
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_CONNECTION_MAX_RETRIES = 10
 CELERY_BROKER_CONNECTION_TIMEOUT = 30
+
+# Celery Beat Settings
+CELERY_BEAT_SCHEDULE = {
+    'update-queue-notifications': {
+        'task': 'uploader.tasks.update_queue_notifications',
+        'schedule': 5.0,  # Run every 30 seconds
+    },
+}
 
 # File Upload Settings
 UPLOAD_ROOT = env('UPLOAD_ROOT', default=str(BASE_DIR / 'uploads'))
@@ -206,3 +247,6 @@ IRIDA_CLIENT_SECRET = env('IRIDA_CLIENT_SECRET', default='')
 IRIDA_USERNAME = env('IRIDA_USERNAME', default='')
 IRIDA_PASSWORD = env('IRIDA_PASSWORD', default='')
 IRIDA_TIMEOUT = env('IRIDA_TIMEOUT')
+
+# LDAP Settings
+USE_LDAP = os.environ.get('USE_LDAP', 'False').lower() == 'true'

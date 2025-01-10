@@ -19,4 +19,5 @@ urlpatterns = [
     path('test-celery/', views.test_celery, name='test_celery'),
     path('test-result/<str:task_id>/', views.test_result, name='test_result'),
     path('api/', api.urls),  # This will include Swagger UI at /api/docs
+    path('queue-info/', views.get_queue_info, name='get_queue_info'),
 ] 

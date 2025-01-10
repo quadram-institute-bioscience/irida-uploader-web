@@ -1,4 +1,7 @@
 from celery import shared_task
+from celery import Celery
+from celery.app.control import Control
+from celery.app import app_or_default
 from django.core.mail import send_mail
 from django.conf import settings
 from .models import Upload, Notification
@@ -17,6 +20,7 @@ import re
 import time
 from logging import StreamHandler
 from io import StringIO
+from celery import current_app
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +91,8 @@ def create_irida_project(name, project_description=None):
         logger.error(f"Error creating IRIDA project: {str(e)}")
         raise
 
-def prepare_sample_list(directory_path, pattern="*_R1_001.fastq.gz", project_id=None, 
-                       project_name=None, paired_end=True, sort=False):
+def prepare_sample_list(directory_path, pattern=None, project_id=None, 
+                       project_name=None, paired_end=None, sort=False):
     """Prepare sample list for IRIDA upload."""
     p = pathlib.Path(directory_path)
 
@@ -99,11 +103,19 @@ def prepare_sample_list(directory_path, pattern="*_R1_001.fastq.gz", project_id=
         
         project_id = create_irida_project(name=project_name)
 
+    # Auto-detect paired_end if not specified
+    if paired_end is None:
+        r1_files = list(p.rglob("*_R1*.fastq.gz"))
+        single_end_files = list(p.rglob("*.fastq.gz"))
+        single_end_files = [f for f in single_end_files if not ("_R1" in f.name or "_R2" in f.name)]
+        paired_end = len(r1_files) > 0
+
     if paired_end:
+        pattern = "*_R1*.fastq.gz"
         regex = re.compile("_S[0-9]{1,3}|_R[12].|_1.non_host.fastq.gz|_2.non_host.fastq.gz")
     else:
-        regex = re.compile(".fastq|.fq.")
         pattern = "*.fastq.gz"
+        regex = re.compile(".fastq|.fq.")
 
     fastqs = list(p.rglob(pattern))
     fastq_names = [fq.name for fq in fastqs]
@@ -153,6 +165,34 @@ class NotificationLogHandler(StreamHandler):
     def close(self):
         self.buffer.close()
         super().close()
+
+def get_queue_info_tasks():
+    """Get information about current queue status"""
+    try:
+        # Get uploads that are in 'submitted' or 'uploading' status from database
+        from .models import Upload
+        queued_uploads = Upload.objects.filter(status__in=['submitted', 'uploading']).order_by('created_at')
+        
+        all_tasks = []
+        for upload in queued_uploads:
+            all_tasks.append({
+                'id': f'db-{upload.id}',
+                'folder_name': upload.folder_name,
+                'status': upload.status,
+                'user': upload.user.email  # Add user email
+            })
+        
+        return {
+            'total_in_queue': len(all_tasks),
+            'tasks': all_tasks
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting queue info: {str(e)}")
+        return {
+            'total_in_queue': 0,
+            'tasks': []
+        }
 
 @shared_task(bind=True, max_retries=5)
 def process_upload(self, upload_id, force_upload=False):
@@ -292,8 +332,28 @@ def create_notification(user_id, upload_id, notification_type):
     """Create a notification for an upload."""
     try:
         upload = Upload.objects.get(id=upload_id)
-        title = 'Upload Complete' if notification_type == 'success' else 'Upload Failed'
-        message = f'Upload of {upload.folder_name} has {"completed successfully" if notification_type == "success" else "failed"}.'
+        
+        # Get queue information
+        queue_info = get_queue_info()
+        total_in_queue = queue_info['total_in_queue']
+        
+        # Find position in queue
+        queue_position = None
+        for idx, task in enumerate(queue_info['tasks']):
+            if task.get('args') and str(upload_id) in str(task['args']):
+                queue_position = idx + 1
+                break
+        
+        if notification_type == 'success':
+            title = 'Upload Complete'
+            message = f'Upload of {upload.folder_name} has completed successfully.'
+        elif notification_type == 'error':
+            title = 'Upload Failed'
+            message = f'Upload of {upload.folder_name} has failed.'
+        else:
+            title = 'Upload In Queue'
+            position_msg = f' (Position {queue_position} of {total_in_queue})' if queue_position else ''
+            message = f'Upload of {upload.folder_name} is in queue{position_msg}. {total_in_queue} total uploads in queue.'
         
         Notification.objects.create(
             user_id=user_id,
@@ -310,3 +370,38 @@ def test_celery(x, y):
     """Test task to verify Celery is working."""
     time.sleep(2)  # Simulate some work
     return x + y 
+
+@shared_task
+def update_queue_notifications():
+    """Update all queue notifications with current positions"""
+    try:
+        # Get current queue information
+        queue_info = get_queue_info()
+        total_in_queue = queue_info['total_in_queue']
+        
+        # Get all 'submitted' uploads
+        queued_uploads = Upload.objects.filter(status='submitted')
+        
+        for upload in queued_uploads:
+            # Find position in queue
+            queue_position = None
+            for idx, task in enumerate(queue_info['tasks']):
+                if task.get('args') and str(upload.id) in str(task['args']):
+                    queue_position = idx + 1
+                    break
+            
+            # Create/update notification
+            position_msg = f' (Position {queue_position} of {total_in_queue})' if queue_position else ''
+            message = f'Upload of {upload.folder_name} is in queue{position_msg}. {total_in_queue} total uploads in queue.'
+            
+            Notification.objects.update_or_create(
+                user_id=upload.user.id,
+                related_upload=upload,
+                type='info',
+                defaults={
+                    'title': 'Upload In Queue',
+                    'message': message
+                }
+            )
+    except Exception as e:
+        logger.error(f"Error updating queue notifications: {str(e)}") 

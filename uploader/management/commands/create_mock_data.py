@@ -29,6 +29,11 @@ class Command(BaseCommand):
             default=3,
             help='Number of projects per user'
         )
+        parser.add_argument(
+            '--single-end',
+            action='store_true',
+            help='Generate single-end reads instead of paired-end'
+        )
 
     def _create_dummy_fastq(self, filepath, size_kb=1):
         """Create a dummy fastq file with specified size."""
@@ -47,7 +52,7 @@ class Command(BaseCommand):
             for _ in range(records_needed):
                 f.write(record)
 
-    def _create_user_structure(self, email, num_projects, samples_per_project):
+    def _create_user_structure(self, email, num_projects, samples_per_project, single_end):
         """Create directory structure and files for a user."""
         base_path = os.path.join(settings.UPLOAD_ROOT, email)
         os.makedirs(base_path, exist_ok=True)
@@ -63,20 +68,31 @@ class Command(BaseCommand):
             for j in range(samples_per_project):
                 sample_name = f"Sample_{j+1}"
                 
-                # Create R1 and R2 fastq files
-                for read in ['R1', 'R2']:
-                    fastq_name = f"{sample_name}_S{j+1}_{read}_001.fastq.gz"
+                if single_end:
+                    # Create single-end fastq file
+                    fastq_name = f"{sample_name}_S{j+1}_001.fastq.gz"
                     fastq_path = os.path.join(project_path, fastq_name)
                     self._create_dummy_fastq(fastq_path)
                     
                     self.stdout.write(
                         self.style.SUCCESS(f'Created {fastq_path}')
                     )
+                else:
+                    # Create R1 and R2 fastq files (existing paired-end logic)
+                    for read in ['R1', 'R2']:
+                        fastq_name = f"{sample_name}_S{j+1}_{read}_001.fastq.gz"
+                        fastq_path = os.path.join(project_path, fastq_name)
+                        self._create_dummy_fastq(fastq_path)
+                        
+                        self.stdout.write(
+                            self.style.SUCCESS(f'Created {fastq_path}')
+                        )
 
     def handle(self, *args, **options):
         num_users = options['users']
         num_projects = options['projects']
         samples_per_project = options['samples']
+        single_end = options['single_end']
         
         # Create test users
         for i in range(num_users):
@@ -96,7 +112,7 @@ class Command(BaseCommand):
                 )
             
             # Create directory structure and files
-            self._create_user_structure(email, num_projects, samples_per_project)
+            self._create_user_structure(email, num_projects, samples_per_project, single_end)
             
         self.stdout.write(
             self.style.SUCCESS(

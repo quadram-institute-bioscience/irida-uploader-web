@@ -24,6 +24,9 @@ from celery import current_app
 
 logger = logging.getLogger(__name__)
 
+MAX_CONCURRENT_UPLOADS = 2
+UPLOAD_LOCK_EXPIRE = 60 * 60  # 1 hour in seconds
+
 def initialize_irida_api():
     """Initialize the IRIDA API from Django settings."""
     logger.info("Initializing IRIDA API")
@@ -170,8 +173,8 @@ def get_queue_info_tasks():
     """Get information about current queue status"""
     try:
         # Get uploads that are in 'submitted' or 'uploading' status from database
-        from .models import Upload
         queued_uploads = Upload.objects.filter(status__in=['submitted', 'uploading']).order_by('created_at')
+        running_uploads = Upload.objects.filter(status='uploading').count()
         
         all_tasks = []
         for upload in queued_uploads:
@@ -179,11 +182,13 @@ def get_queue_info_tasks():
                 'id': f'db-{upload.id}',
                 'folder_name': upload.folder_name,
                 'status': upload.status,
-                'user': upload.user.email  # Add user email
+                'user': upload.user.email
             })
         
         return {
             'total_in_queue': len(all_tasks),
+            'running_uploads': running_uploads,
+            'max_concurrent_uploads': MAX_CONCURRENT_UPLOADS,
             'tasks': all_tasks
         }
         
@@ -191,6 +196,8 @@ def get_queue_info_tasks():
         logger.error(f"Error getting queue info: {str(e)}")
         return {
             'total_in_queue': 0,
+            'running_uploads': 0,
+            'max_concurrent_uploads': MAX_CONCURRENT_UPLOADS,
             'tasks': []
         }
 
@@ -334,7 +341,7 @@ def create_notification(user_id, upload_id, notification_type):
         upload = Upload.objects.get(id=upload_id)
         
         # Get queue information
-        queue_info = get_queue_info()
+        queue_info = get_queue_info_tasks()
         total_in_queue = queue_info['total_in_queue']
         
         # Find position in queue
@@ -376,7 +383,7 @@ def update_queue_notifications():
     """Update all queue notifications with current positions"""
     try:
         # Get current queue information
-        queue_info = get_queue_info()
+        queue_info = get_queue_info_tasks()
         total_in_queue = queue_info['total_in_queue']
         
         # Get all 'submitted' uploads

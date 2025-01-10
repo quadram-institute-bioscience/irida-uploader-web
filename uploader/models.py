@@ -56,7 +56,6 @@ class Upload(models.Model):
                     successful_samples = [
                         {
                             'name': s['Sample Name'],
-                            'project_id': s['Project ID']
                         }
                         for s in sample_status
                         if s.get('Uploaded') == 'True'

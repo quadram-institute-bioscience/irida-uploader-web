@@ -13,6 +13,17 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # Load task modules from all registered Django app configs.
 app.autodiscover_tasks()
 
+app.conf.update(
+    worker_concurrency=2,
+    task_default_queue='default',
+    task_queues={
+        'default': {
+            'exchange': 'default',
+            'routing_key': 'default',
+        }
+    }
+)
+
 @app.task(bind=True)
 def debug_task(self):
     print(f'Request: {self.request!r}') 

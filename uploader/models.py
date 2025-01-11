@@ -16,7 +16,7 @@ class User(AbstractUser):
     REQUIRED_FIELDS = ['username']
 
     def get_upload_dir(self):
-        path = os.path.join(settings.UPLOAD_ROOT, self.email)
+        path = os.path.join(settings.UPLOAD_ROOT, self.email.lower())
         os.makedirs(path, exist_ok=True)
         return path
 

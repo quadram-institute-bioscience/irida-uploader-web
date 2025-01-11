@@ -150,16 +150,24 @@ AUTHENTICATION_BACKENDS = [
 # LDAP Configuration - Only add if LDAP is enabled
 if env('USE_LDAP'):
     AUTHENTICATION_BACKENDS.append('django_auth_ldap.backend.LDAPBackend')
-    
-    AUTH_LDAP_SERVER_URI = env('LDAP_SERVER_URI', default="ldap://your.ldap.server")
+    AUTH_LDAP_BIND_AS_AUTHENTICATING_USER = True
+    # AUTH_LDAP_SERVER_URI = env('LDAP_SERVER_URI', default="ldap://your.ldap.server")
+    AUTH_LDAP_SERVER_URI = "***REMOVED***"
     AUTH_LDAP_BIND_DN = env('LDAP_BIND_DN', default="")
-    AUTH_LDAP_BIND_PASSWORD = env('LDAP_BIND_PASSWORD', default="")
+    # AUTH_LDAP_BIND_DN = "***REMOVED***"
+    # AUTH_LDAP_BIND_PASSWORD = env('LDAP_BIND_PASSWORD', default="")
+    AUTH_LDAP_BIND_PASSWORD = "***REMOVED***"
+    # AUTH_LDAP_USER_SEARCH = LDAPSearch(
+    #     env('LDAP_SEARCH_BASE', default="***REMOVED***"),
+    #     ldap.SCOPE_SUBTREE,
+    #     env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
+    # )
     AUTH_LDAP_USER_SEARCH = LDAPSearch(
-        env('LDAP_SEARCH_BASE', default="ou=users,dc=example,dc=com"),
+        "***REMOVED***,***REMOVED***",
         ldap.SCOPE_SUBTREE,
-        env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
+        "(uid=%(user)s)"
     )
-
+    AUTH_LDAP_GROUP_TYPE = GroupOfNamesType(name_attr="CN")
     # Add group configuration
     AUTH_LDAP_GROUP_SEARCH = LDAPSearch(
         env('LDAP_GROUP_SEARCH_BASE', default="ou=groups,dc=example,dc=com"),
@@ -175,14 +183,16 @@ if env('USE_LDAP'):
 
     # User attributes mapping
     AUTH_LDAP_USER_ATTR_MAP = {
+        "username": "sAMAccountName",
         "first_name": "givenName",
         "last_name": "sn",
-        "email": "mail",
+        # "email": "mail",
     }
 
     # Always update user attributes on login
     AUTH_LDAP_ALWAYS_UPDATE_USER = True
-
+    
+    AUTH_LDAP_USER_QUERY_FIELD = 'email'
     # Mirror LDAP group assignments
     AUTH_LDAP_MIRROR_GROUPS = True
 

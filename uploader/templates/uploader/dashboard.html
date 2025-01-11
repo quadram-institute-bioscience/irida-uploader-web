@@ -229,7 +229,16 @@
             
             const uploadIndex = this.uploads.findIndex(u => u.id === uploadId);
             if (uploadIndex !== -1) {
-                this.uploads[uploadIndex].status = data.status;
+                const oldStatus = this.uploads[uploadIndex].status;
+                const newStatus = data.status;
+                
+                // If status has changed and is now 'success' or 'failed', refresh the page
+                if (oldStatus !== newStatus && (newStatus === 'success' || newStatus === 'failed')) {
+                    window.location.reload();
+                    return;
+                }
+                
+                this.uploads[uploadIndex].status = newStatus;
                 this.uploads[uploadIndex].irida_project_id = data.irida_project_id;
                 if (data.logs) {
                     this.uploadLogs = data.logs;

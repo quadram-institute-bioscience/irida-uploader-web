@@ -152,21 +152,14 @@ AUTHENTICATION_BACKENDS = [
 if env('USE_LDAP'):
     AUTHENTICATION_BACKENDS.append('django_auth_ldap.backend.LDAPBackend')
     AUTH_LDAP_BIND_AS_AUTHENTICATING_USER = True
-    # AUTH_LDAP_SERVER_URI = env('LDAP_SERVER_URI', default="ldap://your.ldap.server")
-    AUTH_LDAP_SERVER_URI = "***REMOVED***"
+    AUTH_LDAP_SERVER_URI = env('LDAP_SERVER_URI', default="ldap://your.ldap.server")
     AUTH_LDAP_BIND_DN = env('LDAP_BIND_DN', default="")
-    # AUTH_LDAP_BIND_DN = "***REMOVED***"
     encoded_password = env('LDAP_BIND_PASSWORD_B64', default="")
     AUTH_LDAP_BIND_PASSWORD = base64.b64decode(encoded_password).decode('utf-8')
-    # AUTH_LDAP_USER_SEARCH = LDAPSearch(
-    #     env('LDAP_SEARCH_BASE', default="***REMOVED***"),
-    #     ldap.SCOPE_SUBTREE,
-    #     env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
-    # )
     AUTH_LDAP_USER_SEARCH = LDAPSearch(
-        "***REMOVED***,***REMOVED***",
+        env('LDAP_SEARCH_BASE', default=""),
         ldap.SCOPE_SUBTREE,
-        "(uid=%(user)s)"
+        env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
     )
     AUTH_LDAP_GROUP_TYPE = GroupOfNamesType(name_attr="CN")
     # Add group configuration

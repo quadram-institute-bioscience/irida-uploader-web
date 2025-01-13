@@ -23,6 +23,7 @@
     searchQuery: '{{ request.GET.search|default:"" }}',
     showDirectoryInfo: true,
     loading: false,
+    projectPrefix: 'QIB',
 
     goToPage(page) {
         const url = new URL(window.location);
@@ -105,6 +106,10 @@
             return;
         }
 
+        const fullProjectName = this.projectPrefix + 
+            (this.projectPrefix && this.projectName ? '-' : '') + 
+            (this.projectName || '');
+
         if (!force) {
             // Check folder status before proceeding with upload
             try {
@@ -144,7 +149,7 @@
                 },
                 body: JSON.stringify({
                     folder_name: this.selectedFolder,
-                    project_name: this.projectName,
+                    project_name: fullProjectName,
                     force_upload: force
                 })
             });
@@ -649,7 +654,7 @@
                                             <i class="fas fa-sync-alt mr-2" :class="{ 'animate-spin': loading }"></i>
                                             Refresh
                                         </button>
-                                        <button @click="showModal = false" class="text-gray-400 hover:text-gray-500">
+                                        <button @click="showUploadModal = false" class="text-gray-400 hover:text-gray-500">
                                             <i class="fas fa-times"></i>
                                         </button>
                                     </div>
@@ -666,11 +671,19 @@
                                 </div>
 
                                 <div class="mb-4">
+                                    <label class="block text-sm font-medium text-gray-700">Project Prefix</label>
+                                    <input type="text" x-model="projectPrefix" 
+                                        class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                        placeholder="QIB">
+                                    <p class="mt-1 text-sm text-gray-500">Will be prepended to project name (e.g. QIB-MyProject). The prefix is used to identify who was sequencing provider, i.e QIB for in-house sequencing, Novogene for Novogene.</p>
+                                </div>
+
+                                <div class="mb-4">
                                     <label class="block text-sm font-medium text-gray-700">Project Name (Optional)</label>
                                     <input type="text" x-model="projectName" 
                                         class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                                         placeholder="Leave empty to use folder name">
-                                    <p class="mt-1 text-sm text-gray-500">If not provided, will use folder name with timestamp</p>
+                                    <p class="mt-1 text-sm text-gray-500">Final name will be: <span x-text="projectPrefix + (projectPrefix && projectName ? '-' : '') + (projectName || '-FolderName')"></span></p>
                                 </div>
 
                                 <div x-show="error" class="mt-4 text-sm text-red-600" x-text="error"></div>

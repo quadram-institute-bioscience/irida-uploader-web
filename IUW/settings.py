@@ -159,7 +159,7 @@ if env('USE_LDAP'):
     AUTH_LDAP_USER_SEARCH = LDAPSearch(
         env('LDAP_SEARCH_BASE', default=""),
         ldap.SCOPE_SUBTREE,
-        env('LDAP_SEARCH_FILTER', default="(uid=%(user)s)")
+        "(uid=%(user)s)"
     )
     AUTH_LDAP_GROUP_TYPE = GroupOfNamesType(name_attr="CN")
     # Add group configuration

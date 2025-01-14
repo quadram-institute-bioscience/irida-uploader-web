@@ -31,7 +31,7 @@ def initialize_irida_api():
     """Initialize the IRIDA API from Django settings."""
     logger.info("Initializing IRIDA API")
     settings_dict = {
-        "base_url": settings.IRIDA_BASE_URL,
+        "base_url": settings.IRIDA_API_URL,
         "client_id": settings.IRIDA_CLIENT_ID,
         "client_secret": settings.IRIDA_CLIENT_SECRET,
         "username": settings.IRIDA_USERNAME,

@@ -53,10 +53,12 @@ services:
     network_mode: host
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
     environment:
-      - POSTGRES_DB=irida_uploader
-      - POSTGRES_USER=irida_uploader
-      - POSTGRES_PASSWORD=irida_uploader
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
     restart: unless-stopped
 
 volumes:

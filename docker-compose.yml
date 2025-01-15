@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    command: gunicorn IUW.wsgi:application --bind 0.0.0.0:8000
+    network_mode: host
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+
+  celery:
+    build: .
+    command: celery -A IUW worker -l INFO
+    network_mode: host
+    volumes:
+      - .:/app
+      - upload_data:/data/uploads
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+
+  celery-beat:
+    build: .
+    command: celery -A IUW beat -l INFO
+    network_mode: host
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    network_mode: host
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    network_mode: host
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=irida_uploader
+      - POSTGRES_USER=irida_uploader
+      - POSTGRES_PASSWORD=irida_uploader
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data: 

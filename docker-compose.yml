@@ -1,9 +1,8 @@
 version: '3.8'
 
 services:
-  web:
+  iuw-base-service: &base-service
     build: .
-    command: gunicorn IUW.wsgi:application --bind 0.0.0.0:8000
     network_mode: host
     volumes:
       - .:/app
@@ -13,32 +12,18 @@ services:
       - redis
       - db
     restart: unless-stopped
+
+  web:
+    <<: *base-service
+    command: gunicorn IUW.wsgi:application --bind 0.0.0.0:8000
 
   celery:
-    build: .
+    <<: *base-service
     command: celery -A IUW worker -l INFO
-    network_mode: host
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    depends_on:
-      - redis
-      - db
-    restart: unless-stopped
 
   celery-beat:
-    build: .
+    <<: *base-service
     command: celery -A IUW beat -l INFO
-    network_mode: host
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    depends_on:
-      - redis
-      - db
-    restart: unless-stopped
 
   redis:
     image: redis:7-alpine

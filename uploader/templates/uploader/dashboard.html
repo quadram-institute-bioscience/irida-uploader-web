@@ -314,7 +314,19 @@
                         <p class="mt-2">
                             <i class="fas fa-lightbulb mr-1"></i>
                             Place your subfolders with sequencing files in this directory to make them available for upload to IRIDA.
-                            <br>
+                        </p>
+
+                        <!-- Added permission warning -->
+                        <div class="mt-2 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+                            <p class="flex items-start text-yellow-700">
+                                <i class="fas fa-exclamation-triangle mt-1 mr-2"></i>
+                                <span>
+                                    <strong>Important:</strong> Due to HPC permission constraints, please ensure your subfolders have full permissions (chmod 777) before uploading. Otherwise, the upload process may fail.
+                                </span>
+                            </p>
+                        </div>
+
+                        <p class="mt-2">
                             <i class="fas fa-info-circle text-blue-400"></i>
                             Accepted file extensions: 
                             <code class="bg-blue-100 px-2 py-1 rounded mt-1 block">_R1/_R2.fastq.gz</code>

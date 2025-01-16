@@ -14,12 +14,12 @@ done
 
 # Apply database migrations
 echo "Applying database migrations..."
-python IUW/manage.py migrate
+python manage.py migrate
 
 # Create superuser if needed
 if [ "$DJANGO_SUPERUSER_EMAIL" ] && [ "$DJANGO_SUPERUSER_PASSWORD" ]; then
   echo "Creating superuser..."
-  python IUW/manage.py createsuperuser --noinput \
+  python manage.py createsuperuser --noinput \
     --email $DJANGO_SUPERUSER_EMAIL \
     --username $DJANGO_SUPERUSER_USERNAME || true
 fi

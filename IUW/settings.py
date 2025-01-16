@@ -22,8 +22,6 @@ env = environ.Env(
     # Set default values
     DJANGO_DEBUG=(bool, False),
     DJANGO_ALLOWED_HOSTS=(list, ['*']),
-    EMAIL_PORT=(int, 587),
-    EMAIL_USE_TLS=(bool, True),
     REDIS_PORT=(int, 6379),
     MAX_UPLOAD_SIZE=(int, 5242880000),  # 5GB in bytes
     IRIDA_TIMEOUT=(int, 10),
@@ -247,12 +245,13 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE
 FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE
 
 # Email Settings
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # Development only
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = env('EMAIL_HOST', default='smtp.your-email-provider.com')
 EMAIL_PORT = env('EMAIL_PORT')
-EMAIL_USE_TLS = env('EMAIL_USE_TLS')
-EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='your-email@example.com')
-EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='your-email-password')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='no-reply@quadram.ac.uk')
+#EMAIL_USE_TLS = env('EMAIL_USE_TLS')
+#EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='your-email@example.com')
+#EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='your-email-password')
 
 # IRIDA Settings
 IRIDA_BASE_URL = env('IRIDA_BASE_URL', default='https://your.irida.server')

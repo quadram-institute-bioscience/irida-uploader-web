@@ -3,7 +3,7 @@ from ninja.security import django_auth
 from django.shortcuts import get_object_or_404
 from typing import List
 from .models import Upload, Notification
-from .schema import UploadOut, NotificationOut
+from .schemas import UploadOut, NotificationOut
 
 api = Router()
 

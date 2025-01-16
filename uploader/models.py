@@ -39,7 +39,7 @@ class Upload(models.Model):
     irida_project_id = models.CharField(max_length=50, null=True, blank=True)
     irida_run_id = models.CharField(max_length=50, null=True, blank=True)  # New field for Run ID
     uploaded_samples = models.JSONField(default=list, blank=True)  # New field to store sample details
-
+    retry_count = models.IntegerField(default=0)
     def update_from_status_file(self):
         """Updates the upload record with information from the status file"""
         status_file = os.path.join(self.get_full_path(), 'irida_uploader_status.info')
@@ -56,6 +56,7 @@ class Upload(models.Model):
                     successful_samples = [
                         {
                             'name': s['Sample Name'],
+                            'project_id': s['Project ID']  # Store Project ID from status file
                         }
                         for s in sample_status
                         if s.get('Uploaded') == 'True'

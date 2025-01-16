@@ -21,6 +21,8 @@ import time
 from logging import StreamHandler
 from io import StringIO
 from celery import current_app
+import json
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +224,11 @@ def process_upload(self, upload_id, force_upload=False):
     try:
         logger.info(f"Starting upload process for upload_id: {upload_id}")
         upload = Upload.objects.get(id=upload_id)
+        
+        # Initialize retry count if not set
+        if not hasattr(upload, 'retry_count'):
+            upload.retry_count = 0
+            
         upload.status = 'uploading'
         upload.save()
 
@@ -235,35 +242,80 @@ def process_upload(self, upload_id, force_upload=False):
             # Get the target directory
             user_dir = upload.user.get_upload_dir()
             target_dir = os.path.join(user_dir, upload.folder_name)
-            logger.info(f"Processing files in directory: {target_dir}")
+            logger.info(f"Processing files in directory: {target_dir}")         
+            
+            # Initialize upload status variables
+            status_file = os.path.join(target_dir, "irida_uploader_status.info")
+            continue_upload = False
+            if os.path.exists(status_file):
+                with open(status_file, 'r') as f:
+                    status_data = json.load(f)
+                    if status_data.get("Upload Status", "").lower() == "partial":
+                        continue_upload = True
+                        logger.info("Found partial upload, will continue from where it left off")
+            
+            # Check status file for completed upload
+            if os.path.exists(status_file):
+                with open(status_file, 'r') as f:
+                    status_data = json.load(f)
+                    if status_data.get("Upload Status", "").lower() == "complete" and not force_upload:
+                        logger.info("Upload already complete, skipping")
+                        upload.status = 'success'
+                        upload.save()
+                        send_email_notification.delay(
+                            upload.user.email,
+                            'Upload Complete',
+                            f'Your upload of {upload.folder_name} was already completed successfully.'
+                        )
+                        return
 
             # Prepare sample list and get project ID
             try:
                 logger.info("Preparing sample list and creating IRIDA project")
-                
                 subfolder_name = os.path.basename(target_dir)
                 run_date = datetime.date.today().strftime("%y%m%d")
-                
                 project_name = upload.project_name if upload.project_name else f"QIB-{subfolder_name}-{run_date}"
                 logger.info(f"Using project name: {project_name}")
                 
-                sample_list, project_id = prepare_sample_list(
-                    directory_path=target_dir,
-                    project_name=project_name
-                )
-                
+                # Only prepare sample list if one doesn't exist
+                sample_list = os.path.join(target_dir, "SampleList.csv")
+                if not os.path.exists(sample_list):
+                    sample_list, project_id = prepare_sample_list(
+                        directory_path=target_dir,
+                        project_name=project_name
+                    )
+                else:
+                    # Get project ID from existing sample list
+                    with open(sample_list, 'r') as f:
+                        next(f)  # Skip [Data]
+                        next(f)  # Skip column headers
+                        first_line = next(f).strip()
+                        project_id = first_line.split(',')[1].strip()
+
                 # Update upload with project ID and sample count
                 with open(sample_list, 'r') as f:
-                    # Skip header lines
                     next(f)  # Skip [Data]
                     next(f)  # Skip column headers
-                    sample_count = sum(1 for line in f)
+                    total_samples = sum(1 for line in f)
                 
-                upload.sample_count = sample_count
+                # If continuing a partial upload, count only remaining samples
+                if continue_upload and os.path.exists(status_file):
+                    with open(status_file, 'r') as f:
+                        status_data = json.load(f)
+                        uploaded_samples = sum(
+                            1 for sample in status_data.get("Sample Status", [])
+                            if sample.get("Uploaded", "").lower() == "true"
+                        )
+                        remaining_samples = total_samples - uploaded_samples
+                        logger.info(f"Continuing partial upload: {uploaded_samples} samples already uploaded, {remaining_samples} remaining")
+                        upload.sample_count = remaining_samples
+                else:
+                    upload.sample_count = total_samples
+                    
                 upload.irida_project_id = project_id
                 upload.save()
                 
-                logger.info(f"Sample list created with {sample_count} samples, project ID: {project_id}")
+                logger.info(f"Sample list processed with {upload.sample_count} samples to upload, project ID: {project_id}")
                 
             except Exception as e:
                 logger.error(f"Error preparing sample list: {str(e)}")
@@ -284,12 +336,12 @@ def process_upload(self, upload_id, force_upload=False):
                 logger.info("IRIDA configuration set up")
                 
                 # Perform the upload
-                logger.info("Starting upload_run_single_entry")
+                logger.info(f"Starting upload_run_single_entry (force={force_upload}, continue={continue_upload})")
                 result = core.upload.upload_run_single_entry(
                     target_dir,
                     force_upload=force_upload,
                     upload_mode="default",
-                    continue_upload=False
+                    continue_upload=continue_upload
                 )
                 logger.info(f"Upload result: {result}")
                 logger.info(f"Upload exit code: {result.exit_code}")
@@ -345,14 +397,21 @@ def process_upload(self, upload_id, force_upload=False):
 
     except Exception as exc:
         logger.error(f"Error processing upload {upload_id}: {str(exc)}")
-        # Increment retry count
         try:
             upload = Upload.objects.get(id=upload_id)
             upload.status = 'failed'
+            
+            # Increment retry count if attribute exists
+            if hasattr(upload, 'retry_count'):
+                upload.retry_count += 1
+            else:
+                upload.retry_count = 1
+                
             upload.save()
             
-            if upload.retry_count < 5:
-                raise self.retry(exc=exc, countdown=60)
+            # Only retry if we haven't exceeded max retries
+            if upload.retry_count < self.max_retries:
+                raise self.retry(exc=exc, countdown=60 * upload.retry_count)  # Exponential backoff
             else:
                 try:
                     create_notification.delay(
@@ -386,10 +445,10 @@ def create_notification(user_id, upload_id, notification_type):
         
         if notification_type == 'success':
             title = 'Upload Complete'
-            message = f'Upload of {upload.folder_name} has completed successfully.'
+            message = f'Upload of {upload.folder_name} has completed successfully.\n\nTotal samples uploaded: {upload.sample_count}'
         elif notification_type == 'error':
             title = 'Upload Failed'
-            message = f'Upload of {upload.folder_name} has failed.'
+            message = f'Upload of {upload.folder_name} has failed.\n\n'
         else:
             title = 'Upload In Queue'
             position_msg = f' (Position {queue_position} of {total_in_queue})' if queue_position else ''
@@ -444,4 +503,4 @@ def update_queue_notifications():
                 }
             )
     except Exception as e:
-        logger.error(f"Error updating queue notifications: {str(e)}") 
+        logger.error(f"Error updating queue notifications: {str(e)}")

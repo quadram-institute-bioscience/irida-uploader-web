@@ -24,6 +24,7 @@
     showDirectoryInfo: true,
     loading: false,
     projectPrefix: 'QIB',
+    appendDate: true,
 
     goToPage(page) {
         const url = new URL(window.location);
@@ -106,16 +107,17 @@
             return;
         }
 
-        // Construct the project name with consistent date format
+        // Construct the project name with optional date
         const today = new Date();
-        const date = today.getFullYear().toString().slice(-2) + 
-                     String(today.getMonth() + 1).padStart(2, '0') + 
-                     String(today.getDate()).padStart(2, '0');
+        const date = this.appendDate ? 
+            '-' + today.getFullYear().toString().slice(-2) + 
+            String(today.getMonth() + 1).padStart(2, '0') + 
+            String(today.getDate()).padStart(2, '0') : '';
                      
         const folderNameFormatted = this.selectedFolder.replace(/_/g, '-');
         const fullProjectName = this.projectPrefix + '-' + 
             (this.projectName ? this.projectName : folderNameFormatted) + 
-            '-' + date;
+            date;
 
         if (!force) {
             // Check folder status before proceeding with upload
@@ -702,17 +704,53 @@
                                     <input type="text" x-model="projectName" 
                                         class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                                         placeholder="Leave empty to use folder name">
+                                    
+                                    <!-- Add toggle switch for date append -->
+                                    <div class="mt-2 flex items-center justify-between p-2 rounded-lg bg-gray-50">
+                                        <div class="flex items-center">
+                                            <i class="fas fa-calendar-alt text-gray-500 mr-2"></i>
+                                            <span class="text-sm text-gray-700 font-medium">Append date to project name</span>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" x-model="appendDate" class="sr-only peer" checked>
+                                            <div class="w-14 h-7 bg-gray-300 rounded-full peer 
+                                                        peer-focus:ring-4 peer-focus:ring-blue-300 
+                                                        dark:peer-focus:ring-blue-800 
+                                                        peer-checked:after:translate-x-full 
+                                                        peer-checked:after:border-white 
+                                                        after:content-[''] 
+                                                        after:absolute 
+                                                        after:top-0.5 
+                                                        after:left-[4px] 
+                                                        after:bg-white 
+                                                        after:border-gray-300 
+                                                        after:border 
+                                                        after:rounded-full 
+                                                        after:h-6 
+                                                        after:w-6 
+                                                        after:transition-all 
+                                                        dark:bg-gray-300
+                                                        peer-checked:bg-blue-500">
+                                            </div>
+                                            <span class="ml-2 text-sm font-medium" 
+                                                  :class="appendDate ? 'text-blue-600' : 'text-gray-500'"
+                                                  x-text="appendDate ? 'On' : 'Off'">
+                                            </span>
+                                        </label>
+                                    </div>
+
                                     <p class="mt-1 text-sm text-gray-500">
                                         Final name will be: 
                                         <span x-text="
                                             (() => {
                                                 const d = new Date();
-                                                const dateStr = d.getFullYear().toString().slice(-2) + 
-                                                               String(d.getMonth() + 1).padStart(2, '0') + 
-                                                               String(d.getDate()).padStart(2, '0');
+                                                const dateStr = appendDate ? 
+                                                    '-' + d.getFullYear().toString().slice(-2) + 
+                                                    String(d.getMonth() + 1).padStart(2, '0') + 
+                                                    String(d.getDate()).padStart(2, '0') : '';
                                                 return projectPrefix + '-' + 
                                                        (projectName ? projectName : selectedFolder.replace(/_/g, '-')) + 
-                                                       '-' + dateStr;
+                                                       dateStr;
                                             })()
                                         "></span>
                                     </p>

@@ -203,7 +203,7 @@ if env('USE_LDAP'):
         "first_name": "givenName",
         "last_name": "sn",
         "email": "mail",
-        "is_active": "userAccountControl",  # This will be overridden by AUTH_LDAP_USER_FLAGS_BY_GROUP
+        #"is_active": "userAccountControl",  # This will be overridden by AUTH_LDAP_USER_FLAGS_BY_GROUP
     }
 
 # Redis Settings

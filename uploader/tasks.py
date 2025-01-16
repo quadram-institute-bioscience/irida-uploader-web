@@ -201,6 +201,21 @@ def get_queue_info_tasks():
             'tasks': []
         }
 
+@shared_task
+def send_email_notification(recipient_email, subject, message):
+    """Send email notification as a Celery task."""
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[recipient_email],
+            fail_silently=True,
+        )
+        logger.info(f"Email notification sent to {recipient_email}")
+    except Exception as e:
+        logger.error(f"Failed to send email notification: {str(e)}")
+
 @shared_task(bind=True, max_retries=5)
 def process_upload(self, upload_id, force_upload=False):
     """Process file upload and send to IRIDA."""
@@ -282,9 +297,21 @@ def process_upload(self, upload_id, force_upload=False):
                 if result.exit_code == 0:
                     upload.status = 'success'
                     logger.info("IRIDA upload completed successfully")
+                    # Send success email asynchronously
+                    send_email_notification.delay(
+                        upload.user.email,
+                        'Upload Complete',
+                        f'Your upload of {upload.folder_name} has completed successfully.'
+                    )
                 else:
                     upload.status = 'failed'
                     logger.error(f"IRIDA upload failed with exit code {result.exit_code}")
+                    # Send failure email asynchronously
+                    send_email_notification.delay(
+                        upload.user.email,
+                        'Upload Failed',
+                        f'Your upload of {upload.folder_name} has failed. Please check the system for more details.'
+                    )
                 upload.save()
 
             except Exception as e:
@@ -293,6 +320,12 @@ def process_upload(self, upload_id, force_upload=False):
                 logger.error(f"Error args: {e.args}")
                 upload.status = 'failed'
                 upload.save()
+                # Send failure email asynchronously
+                send_email_notification.delay(
+                    upload.user.email,
+                    'Upload Failed',
+                    f'Your upload of {upload.folder_name} has failed due to an error. Please contact support for assistance.'
+                )
                 raise e
             
             # Try to create notification, but don't fail if it doesn't work

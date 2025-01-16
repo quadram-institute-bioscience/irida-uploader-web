@@ -192,14 +192,6 @@ if env('USE_LDAP'):
         "is_active": env('LDAP_AUTO_ACTIVE_GROUPS', default="cn=approved_users,ou=groups,dc=example,dc=com"),
     }
 
-    # User attributes mapping
-    #AUTH_LDAP_USER_ATTR_MAP = {
-    #    "username": "sAMAccountName",
-    #    "first_name": "givenName",
-    #    "last_name": "sn",
-        # "email": "mail",
-    #}
-
     # Always update user attributes on login
     AUTH_LDAP_ALWAYS_UPDATE_USER = True
     
@@ -256,11 +248,11 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE
 
 # Email Settings
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # Development only
-# EMAIL_HOST = env('EMAIL_HOST', default='smtp.your-email-provider.com')
-# EMAIL_PORT = env('EMAIL_PORT')
-# EMAIL_USE_TLS = env('EMAIL_USE_TLS')
-# EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='your-email@example.com')
-# EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='your-email-password')
+EMAIL_HOST = env('EMAIL_HOST', default='smtp.your-email-provider.com')
+EMAIL_PORT = env('EMAIL_PORT')
+EMAIL_USE_TLS = env('EMAIL_USE_TLS')
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='your-email@example.com')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='your-email-password')
 
 # IRIDA Settings
 IRIDA_BASE_URL = env('IRIDA_BASE_URL', default='https://your.irida.server')

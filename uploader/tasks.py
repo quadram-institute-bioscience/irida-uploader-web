@@ -300,8 +300,8 @@ def process_upload(self, upload_id, force_upload=False):
                     # Send success email asynchronously
                     send_email_notification.delay(
                         upload.user.email,
-                        'Upload Complete',
-                        f'Your upload of {upload.folder_name} has completed successfully.'
+                        f'Upload {upload.folder_name} Complete',
+                        f'Your upload of {upload.folder_name} has completed successfully.\n\nTotal samples uploaded: {upload.sample_count}'
                     )
                 else:
                     upload.status = 'failed'
@@ -309,7 +309,7 @@ def process_upload(self, upload_id, force_upload=False):
                     # Send failure email asynchronously
                     send_email_notification.delay(
                         upload.user.email,
-                        'Upload Failed',
+                        f'Upload {upload.folder_name} Failed',
                         f'Your upload of {upload.folder_name} has failed. Please check the system for more details.'
                     )
                 upload.save()

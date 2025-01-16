@@ -45,9 +45,11 @@ SECRET_KEY = env('DJANGO_SECRET_KEY', default='django-insecure-n(4&*ld9n-cm9$=7w
 DEBUG = env('DJANGO_DEBUG')
 
 ALLOWED_HOSTS = env('DJANGO_ALLOWED_HOSTS')
-
-
 # Application definition
+SITE_URL = 'https://irida.quadram.ac.uk/iuw'
+LOGIN_URL = '/iuw/accounts/login/'
+LOGIN_REDIRECT_URL = '/iuw/'
+LOGOUT_REDIRECT_URL = '/iuw/'
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -148,8 +150,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
-STATIC_URL = 'static/'
-
+STATIC_URL = '/iuw/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
@@ -191,12 +193,12 @@ if env('USE_LDAP'):
     }
 
     # User attributes mapping
-    AUTH_LDAP_USER_ATTR_MAP = {
-        "username": "sAMAccountName",
-        "first_name": "givenName",
-        "last_name": "sn",
+    #AUTH_LDAP_USER_ATTR_MAP = {
+    #    "username": "sAMAccountName",
+    #    "first_name": "givenName",
+    #    "last_name": "sn",
         # "email": "mail",
-    }
+    #}
 
     # Always update user attributes on login
     AUTH_LDAP_ALWAYS_UPDATE_USER = True
@@ -207,6 +209,7 @@ if env('USE_LDAP'):
 
     # If user is not in auto-active groups, set them as inactive
     AUTH_LDAP_USER_ATTR_MAP = {
+        "username": "sAMAccountName",
         "first_name": "givenName",
         "last_name": "sn",
         "email": "mail",
@@ -261,6 +264,7 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # Development 
 
 # IRIDA Settings
 IRIDA_BASE_URL = env('IRIDA_BASE_URL', default='https://your.irida.server')
+IRIDA_API_URL = env('IRIDA_API_URL', default='https://your.irida.server')
 IRIDA_CLIENT_ID = env('IRIDA_CLIENT_ID', default='')
 IRIDA_CLIENT_SECRET = env('IRIDA_CLIENT_SECRET', default='')
 IRIDA_USERNAME = env('IRIDA_USERNAME', default='')

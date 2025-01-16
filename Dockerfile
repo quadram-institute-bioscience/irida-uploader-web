@@ -18,6 +18,21 @@ RUN apt-get update \
         postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Run entrypoint script
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+
+# Create user and set up directories
+RUN groupadd -g 12318 appgroup && \
+    useradd -u 11692 -g appgroup -m appuser && \
+    mkdir -p /app /app/celery /home/appuser/.cache && \
+    chmod +x /docker-entrypoint.sh && \
+    chown -R appuser:appgroup /app /app/celery /home/appuser /docker-entrypoint.sh
+
+
+USER appuser
+ENV HOME=/home/appuser
+ENV PATH="/home/appuser/.local/bin:${PATH}"
+
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -25,8 +40,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project
 COPY . .
 
-# Run entrypoint script
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
 
 ENTRYPOINT ["/docker-entrypoint.sh"] 

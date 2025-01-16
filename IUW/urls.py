@@ -20,11 +20,13 @@ from django.contrib.auth import views as auth_views
 from django.conf import settings
 from django.conf.urls.static import static
 
+admin.site.site_url = '/iuw'
+
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('', include('uploader.urls')),
+    path('iuw/admin/', admin.site.urls),
+    path('iuw/', include('uploader.urls')),
     
     # Authentication URLs
-    path('accounts/login/', auth_views.LoginView.as_view(template_name='uploader/login.html'), name='login'),
-    path('accounts/logout/', auth_views.LogoutView.as_view(next_page='/'), name='logout'),
+    path('iuw/accounts/login/', auth_views.LoginView.as_view(template_name='uploader/login.html'), name='login'),
+    path('iuw/accounts/logout/', auth_views.LogoutView.as_view(next_page='/'), name='logout'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

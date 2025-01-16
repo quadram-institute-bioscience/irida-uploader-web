@@ -1,13 +1,19 @@
-version: '3.8'
-
 services:
   iuw-base-service: &base-service
+    profiles: ["never"]
     build: .
     network_mode: host
+    user: "11692:12318"
     volumes:
       - .:/app
+      - /qib:/qib
+      - ./staticfiles:/app/staticfiles
+      - cache-data:/home/appuser/.cache
+      - celery-data:/app/celery
     env_file:
       - .env
+    environment:
+      - HOME=/home/appuser
     depends_on:
       - redis
       - db
@@ -15,15 +21,24 @@ services:
 
   web:
     <<: *base-service
+    profiles: []
     command: gunicorn IUW.wsgi:application --bind 0.0.0.0:8000
 
   celery:
     <<: *base-service
+    profiles: []
     command: celery -A IUW worker -l INFO
 
   celery-beat:
     <<: *base-service
+    profiles: []
     command: celery -A IUW beat -l INFO
+    volumes:
+      - .:/app
+      - /qib:/qib
+      - ./staticfiles:/app/staticfiles
+      - cache-data:/home/appuser/.cache
+      - celery-data:/app/celery
 
   redis:
     image: redis:7-alpine
@@ -40,11 +55,13 @@ services:
     env_file:
       - .env
     environment:
-      - POSTGRES_DB=${DB_NAME}
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=irida_uploader
+      - POSTGRES_USER=irida_uploader
+      - POSTGRES_PASSWORD=irida_uploader
     restart: unless-stopped
 
 volumes:
   redis_data:
-  postgres_data: 
+  postgres_data:
+  cache-data:
+  celery-data:

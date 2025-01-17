@@ -224,10 +224,10 @@ def process_upload(self, upload_id, force_upload=False):
         logger.info(f"Starting upload process for upload_id: {upload_id}")
         upload = Upload.objects.get(id=upload_id)
         
-        # Initialize retry count if not set
-        if not hasattr(upload, 'retry_count'):
-            upload.retry_count = 0
-            
+        # Check current retry count
+        current_retries = self.request.retries
+        logger.info(f"Current retry attempt: {current_retries + 1} of {self.max_retries + 1}")
+        
         upload.status = 'uploading'
         upload.save()
 
@@ -399,24 +399,27 @@ def process_upload(self, upload_id, force_upload=False):
         try:
             upload = Upload.objects.get(id=upload_id)
             upload.status = 'failed'
-            
-            # Increment retry count if attribute exists
-            if hasattr(upload, 'retry_count'):
-                upload.retry_count += 1
-            else:
-                upload.retry_count = 1
-                
             upload.save()
             
-            # Only retry if we haven't exceeded max retries
-            if upload.retry_count < self.max_retries:
-                raise self.retry(exc=exc, countdown=60 * upload.retry_count)  # Exponential backoff
+            # Always retry on failure unless max retries reached
+            if self.request.retries < self.max_retries:
+                logger.info(f"Retrying upload {upload_id}. Attempt {self.request.retries + 1} of {self.max_retries}")
+                # Exponential backoff: 1min, 2min, 4min, 8min, 16min between retries
+                countdown = 60 * (2 ** self.request.retries)
+                raise self.retry(exc=exc, countdown=countdown)
             else:
+                logger.error(f"Upload {upload_id} failed after {self.max_retries} retries")
                 try:
                     create_notification.delay(
                         upload.user.id,
                         upload.id,
                         'error'
+                    )
+                    # Send final failure email
+                    send_email_notification.delay(
+                        upload.user.email,
+                        'Upload Failed - All Retries Exhausted',
+                        f'Your upload of {upload.folder_name} has failed after {self.max_retries} attempts. Please contact support for assistance.'
                     )
                 except Exception as e:
                     logger.error(f"Failed to create error notification: {str(e)}")

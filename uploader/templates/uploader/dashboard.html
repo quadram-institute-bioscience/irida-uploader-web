@@ -4,6 +4,27 @@
 {% block title %}Dashboard - IRIDA Uploader Web{% endblock %}
 
 {% block content %}
+<!-- Add warning message for inactive users -->
+{% if not user.is_active %}
+<div class="mb-8">
+    <div class="bg-red-50 border-l-4 border-red-400 p-4 rounded-lg">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <i class="fas fa-exclamation-circle text-red-400"></i>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium text-red-800">Your username is not active</h3>
+                <div class="mt-2 text-sm text-red-700">
+                    <p>Your username is currently inactive. Please contact support to activate your account before attempting to use this service.</p>
+                    <p class="mt-1">Email: <a href="mailto:support@quadram-institute.atlassian.net" class="underline">support@quadram-institute.atlassian.net</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if user.is_active %}
 <div x-data="{ 
     showUploadModal: false,
     showForceUploadConfirm: false,
@@ -812,4 +833,5 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %} 

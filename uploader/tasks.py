@@ -22,7 +22,6 @@ from logging import StreamHandler
 from io import StringIO
 from celery import current_app
 import json
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +217,7 @@ def send_email_notification(recipient_email, subject, message):
     except Exception as e:
         logger.error(f"Failed to send email notification: {str(e)}")
 
-@shared_task(bind=True, max_retries=5)
+@shared_task(bind=True, max_retries=5, time_limit=86400, soft_time_limit=82800)
 def process_upload(self, upload_id, force_upload=False):
     """Process file upload and send to IRIDA."""
     try:

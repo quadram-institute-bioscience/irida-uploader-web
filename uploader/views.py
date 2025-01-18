@@ -232,6 +232,26 @@ def get_upload_status(request, upload_id):
         # Update database from status file
         upload.update_from_status_file()
         
+        # Get sample progress from status file
+        sample_progress = {
+            'uploaded': 0,
+            'total': 0
+        }
+        
+        status_file = os.path.join(request.user.get_upload_dir(), upload.folder_name, 'irida_uploader_status.info')
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, 'r') as f:
+                    status_data = json.load(f)
+                    sample_statuses = status_data.get('Sample Status', [])
+                    sample_progress['total'] = len(sample_statuses)
+                    sample_progress['uploaded'] = sum(
+                        1 for sample in sample_statuses 
+                        if sample.get('Uploaded') == 'True'
+                    )
+            except Exception as e:
+                logger.error(f"Error reading status file for progress: {str(e)}")
+        
         # Get IRIDA logs if they exist
         logs = ["Log file not found"]
         log_file = os.path.join(request.user.get_upload_dir(), upload.folder_name, 'irida-uploader.log')
@@ -247,7 +267,8 @@ def get_upload_status(request, upload_id):
             'logs': logs,
             'irida_project_id': upload.irida_project_id or '-',
             'sample_count': upload.sample_count,
-            'run_id': upload.irida_run_id
+            'run_id': upload.irida_run_id,
+            'sample_progress': sample_progress
         })
     except Upload.DoesNotExist:
         return JsonResponse({'status': 'error'}, status=404)

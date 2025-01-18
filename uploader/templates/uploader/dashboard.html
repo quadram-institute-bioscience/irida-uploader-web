@@ -275,6 +275,7 @@
                 
                 this.uploads[uploadIndex].status = newStatus;
                 this.uploads[uploadIndex].irida_project_id = data.irida_project_id;
+                this.uploads[uploadIndex].sample_progress = data.sample_progress;
                 if (data.logs) {
                     this.uploadLogs = data.logs;
                 }
@@ -540,23 +541,41 @@
                                 <span class="text-gray-400 ml-1">samples</span>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap">
-                                <span class="px-3 py-1 inline-flex items-center text-sm leading-5 font-medium rounded-full"
-                                    :class="{
-                                        'bg-green-100 text-green-800': upload.status === 'success',
-                                        'bg-red-100 text-red-800': upload.status === 'failed',
-                                        'bg-yellow-100 text-yellow-800': upload.status === 'uploading',
-                                        'bg-blue-100 text-blue-800': upload.status === 'submitted'
-                                    }">
-                                    <i class="mr-1.5 text-xs"
-                                       :class="{
-                                           'fas fa-check': upload.status === 'success',
-                                           'fas fa-times': upload.status === 'failed',
-                                           'fas fa-sync fa-spin': upload.status === 'uploading',
-                                           'fas fa-clock': upload.status === 'submitted'
-                                       }">
-                                    </i>
-                                    <span x-text="upload.status.charAt(0).toUpperCase() + upload.status.slice(1)"></span>
-                                </span>
+                                <div class="flex flex-col gap-2">
+                                    <!-- Status badge -->
+                                    <span class="px-3 py-1 inline-flex items-center text-sm leading-5 font-medium rounded-full w-fit"
+                                        :class="{
+                                            'bg-green-100 text-green-800': upload.status === 'success',
+                                            'bg-red-100 text-red-800': upload.status === 'failed',
+                                            'bg-yellow-100 text-yellow-800': upload.status === 'uploading',
+                                            'bg-blue-100 text-blue-800': upload.status === 'submitted'
+                                        }">
+                                        <i class="mr-1.5 text-xs"
+                                           :class="{
+                                               'fas fa-check': upload.status === 'success',
+                                               'fas fa-times': upload.status === 'failed',
+                                               'fas fa-sync fa-spin': upload.status === 'uploading',
+                                               'fas fa-clock': upload.status === 'submitted'
+                                           }">
+                                        </i>
+                                        <span x-text="upload.status.charAt(0).toUpperCase() + upload.status.slice(1)"></span>
+                                    </span>
+
+                                    <!-- Progress bar outside the status badge -->
+                                    <div x-show="upload.sample_progress" class="w-full">
+                                        <div class="text-xs font-medium text-gray-600 mb-1">
+                                            <span x-text="upload.sample_progress.uploaded"></span>
+                                            <span class="text-gray-400">/</span>
+                                            <span x-text="upload.sample_progress.total"></span>
+                                        </div>
+                                        
+                                        <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                            <div class="h-full bg-yellow-500 rounded-full transition-all duration-500"
+                                                 :style="`width: ${(upload.sample_progress.uploaded / upload.sample_progress.total) * 100}%`">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(upload.created_at).toLocaleString()"></td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

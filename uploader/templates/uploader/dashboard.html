@@ -579,7 +579,7 @@
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="new Date(upload.created_at).toLocaleString()"></td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                <button @click="updateUploadStatus(upload.id)" 
+                                <button @click="uploadLogs = []; updateUploadStatus(upload.id); showLogs = true" 
                                         class="text-blue-600 hover:text-blue-800">
                                     <i class="fas fa-eye mr-1"></i>View Logs
                                 </button>

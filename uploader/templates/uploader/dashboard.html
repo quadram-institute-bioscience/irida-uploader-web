@@ -564,14 +564,14 @@
                                     <!-- Progress bar outside the status badge -->
                                     <div x-show="upload.sample_progress" class="w-full">
                                         <div class="text-xs font-medium text-gray-600 mb-1">
-                                            <span x-text="upload.sample_progress.uploaded"></span>
+                                            <span x-text="(upload.sample_progress && upload.sample_progress.uploaded) || 0"></span>
                                             <span class="text-gray-400">/</span>
-                                            <span x-text="upload.sample_progress.total"></span>
+                                            <span x-text="(upload.sample_progress && upload.sample_progress.total) || 0"></span>
                                         </div>
                                         
                                         <div class="h-1.5 bg-gray-200 rounded-full overflow-hidden">
                                             <div class="h-full bg-yellow-500 rounded-full transition-all duration-500"
-                                                 :style="`width: ${(upload.sample_progress.uploaded / upload.sample_progress.total) * 100}%`">
+                                                 :style="`width: ${(upload.sample_progress && upload.sample_progress.total) ? (upload.sample_progress.uploaded / upload.sample_progress.total) * 100 : 0}%`">
                                             </div>
                                         </div>
                                     </div>

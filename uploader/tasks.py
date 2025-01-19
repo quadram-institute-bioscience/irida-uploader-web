@@ -351,8 +351,8 @@ def process_upload(self, upload_id, force_upload=False):
                     # Send success email asynchronously
                     send_email_notification.delay(
                         upload.user.email,
-                        f'Upload {upload.folder_name} Complete',
-                        f'Your upload of {upload.folder_name} has completed successfully.\n\nTotal samples uploaded: {upload.sample_count}'
+                        f'Upload {upload.folder_name} Complete 🎉',
+                        f'Your upload of {upload.folder_name} has completed successfully 🥳.\n\nTotal samples uploaded: {upload.sample_count}\n\nPlease access your data at: {settings.IRIDA_BASE_URL}/projects/{upload.irida_project_id}'
                     )
                 else:
                     upload.status = 'failed'
@@ -360,8 +360,8 @@ def process_upload(self, upload_id, force_upload=False):
                     # Send failure email asynchronously
                     send_email_notification.delay(
                         upload.user.email,
-                        f'Upload {upload.folder_name} Failed',
-                        f'Your upload of {upload.folder_name} has failed. Please check the system for more details.'
+                        f'Upload {upload.folder_name} Failed 💔',
+                        f'Your upload of {upload.folder_name} has failed. Please check the log file in the upload folder for more details.'
                     )
                 upload.save()
 
@@ -375,7 +375,7 @@ def process_upload(self, upload_id, force_upload=False):
                 send_email_notification.delay(
                     upload.user.email,
                     'Upload Failed',
-                    f'Your upload of {upload.folder_name} has failed due to an error. Please contact support for assistance.'
+                    f'Your upload of {settings.UPLOAD_ROOT}/{upload.folder_name} has failed due to an error. Please contact support for assistance.'
                 )
                 raise e
             
